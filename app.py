@@ -18,18 +18,27 @@ doesn't, it's the service itself.
 Routes:
 
     POST /ping        the worked example. Already works. Don't edit it
-    POST /submit      ← YOU BUILD THIS (Milestone 3, 4, 5)
-    POST /appeal      ← YOU BUILD THIS (Milestone 5)
+    POST /submit      judge a piece of text
+    POST /appeal      a writer contests a decision
+    GET  /content/<id> one item's current status (stretch)
+    GET  /verify/prompt  verified-writer check, step 1 (stretch)
+    POST /verify      verified-writer check, step 2 (stretch)
     GET  /log         the audit log. Already works
     GET  /health      is the service up, and is the model loaded
 """
 
+import random
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from flask import Flask, jsonify, request
 
 import audit
 import config
+import detector
+import markers
+import scoring
+import stylometry
 
 app = Flask(__name__)
 
@@ -155,91 +164,197 @@ def health():
 def submit():
     """
     Take a piece of text, decide about it, log the decision, answer.
-    ← TODO — Milestones 3, 4 and 5
 
-    Expects JSON:
-        {"text": "...", "creator_id": "..."}
-
-    Should return JSON with, at minimum:
-        {"content_id": "...", "guess": "...", "confidence": 0.0, "label": "...",
-         "model_score": 0.0, "style_score": 0.0}
-
-    ⚠️ **Both signal scores go in the response, not just the log.** Unit 8's
-    `run_attacks.py` and `run_eval.py` read `model_score` and `style_score`
-    straight off this response and put them in your reports. Leave them out and
-    every row of next unit's evidence says `null` — which is exactly the
-    diagnostic you need to name a stage and a mechanism. You do not want to
-    find that out after running the attack set.
-
-    ─────────────────────────────────────────────────────────────────────────
-    Build it in three passes. Do not skip ahead — the ordering is how you tell
-    a broken route from a broken signal.
-
-    **Milestone 3 — the route answers.**
-      1. Return a hardcoded response. Confirm `curl` gets it back before you
-         add any logic at all.
-      2. Then pull `text` and `creator_id` out of the payload.
-      3. Then call ONE signal — `detector.model_signal(text)` — and put the
-         real number in. Leave confidence and label as placeholders.
-      4. Log every submission with `audit.log_decision(...)`. The content_id
-         matters: `/appeal` needs it, and a student who skips it rebuilds this
-         whole flow later.
-
-    **Milestone 4 — the second signal and the score.**
-      5. Add `stylometry.style_signal(text)`.
-      6. Combine them with `scoring.combine_signals(...)`.
-      7. Log BOTH signal scores alongside the combined one, and put them in the
-         response too. Next unit you can't diagnose anything without them.
-
-    **Milestone 5 — the label.**
-      8. `scoring.score_to_label(...)` and put the real label in the response.
-
-    ─────────────────────────────────────────────────────────────────────────
-    Worth deciding early, because unit 8's attack set will decide it for you:
-    what should this do when `text` is missing, empty, or enormous? A crash on
-    a malformed input is one of the most common real failures there is.
+    Expects JSON {"text": "...", "creator_id": "..."}. Anything the service
+    can't judge is refused with a 4xx and logged as a rejection — see the
+    endpoint contract in README.md.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _reject("unknown", 400, "invalid_input", "Send a JSON object with text and creator_id.")
 
-    # TODO: delete this and build the route.
+    creator_id = payload.get("creator_id")
+    if not isinstance(creator_id, str) or not creator_id.strip():
+        return _reject("unknown", 400, "invalid_input", "creator_id must be a non-empty string.")
+
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return _reject(creator_id, 400, "invalid_input", "text must be a non-empty string.")
+    if len(text) > config.MAX_TEXT_CHARS:
+        return _reject(creator_id, 413, "too_long", f"text is over {config.MAX_TEXT_CHARS:,} characters.")
+    if len(stylometry.words(text)) < config.MIN_WORDS:
+        return _reject(creator_id, 422, "too_short", f"text needs at least {config.MIN_WORDS} words to score.")
+
+    content_id = str(uuid.uuid4())
+    scores = _score(text)
+    guess, label = scoring.score_to_label(scores["confidence"])
+    verified = _is_verified(creator_id)
+    if verified:
+        label += " " + scoring.VERIFIED_NOTE
+
+    audit.log_decision(
+        content_id=content_id, creator_id=creator_id, guess=guess,
+        model_score=scores["model_score"], style_score=scores["style_score"],
+        combined_score=scores["confidence"], label=label,
+        marker_score=scores["marker_score"], verified_writer=verified,
+    )
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /submit isn't built yet — see the TODO in app.py.",
-        "you_sent": {
-            "text_length": len(payload.get("text", "")),
-            "creator_id": payload.get("creator_id"),
-        },
-    }), 501
+        "content_id": content_id,
+        "creator_id": creator_id,
+        "guess": guess,
+        "label": label,
+        **scores,
+        "status": "decided",
+        "verified_writer": verified,
+    })
+
+
+def _score(text: str) -> dict:
+    """All three signals and the combined score for one text."""
+    model_score = detector.model_signal(text)
+    style_score = stylometry.style_signal(text)
+    marker_score = markers.marker_signal(text)
+    return {
+        "confidence": scoring.combine_signals(model_score, style_score, marker_score),
+        "model_score": model_score,
+        "style_score": style_score,
+        "marker_score": marker_score,
+    }
+
+
+def _reject(creator_id: str, code: int, error: str, message: str):
+    """Refuse a request, and leave a trace of it in the log."""
+    audit.log_rejection(creator_id=creator_id, reason=error, http_status=code)
+    return jsonify({"error": error, "message": message}), code
 
 
 @app.post("/appeal")
 def appeal():
     """
-    A writer says you got it wrong. ← TODO — Milestone 5
+    A writer says you got it wrong. Expects JSON {"content_id", "reasoning"}.
 
-    Expects JSON:
-        {"content_id": "...", "reasoning": "..."}
-
-    Should:
-      1. Check the content_id actually exists — `audit.entries_for(id)` tells
-         you. A typo here fails silently and looks like a broken endpoint,
-         which is the single most common way this milestone eats an hour.
-      2. Record the appeal with `audit.log_appeal(...)`, which moves the item
-         to `under_review`.
-      3. Confirm to the writer. No automatic re-checking needed.
-
-    This is the smallest endpoint in the project and the one that matters most
-    to the person on the other end. It's the only thing standing between a
-    wrong accusation and nothing at all.
+    Appends the appeal beside the original decision (the log is append-only,
+    so the decision is never overwritten) and moves the item to under_review.
+    A bad request writes nothing — there's no decision for it to sit beside.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid_input", "message": "Send a JSON object with content_id and reasoning."}), 400
 
-    # TODO: delete this and build the route.
+    content_id, reasoning = payload.get("content_id"), payload.get("reasoning")
+    if not isinstance(content_id, str) or not content_id.strip():
+        return jsonify({"error": "invalid_input", "message": "content_id must be a non-empty string."}), 400
+    if not isinstance(reasoning, str) or not reasoning.strip():
+        return jsonify({"error": "invalid_input", "message": "reasoning must be a non-empty string."}), 400
+
+    decision = _decision_for(content_id)
+    if decision is None:
+        return jsonify({"error": "not_found", "message": f"No submission with content_id {content_id}."}), 404
+
+    audit.log_appeal(content_id=content_id, creator_id=decision["creator_id"], reasoning=reasoning)
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /appeal isn't built yet — see the TODO in app.py.",
-        "you_sent": payload,
-    }), 501
+        "content_id": content_id,
+        "status": "under_review",
+        "message": "Thanks — your appeal is recorded. A person will review this "
+                   "piece, and it shows as under review until then.",
+    })
+
+
+@app.get("/content/<content_id>")
+def content(content_id):
+    """One item's current status, rebuilt from the audit log. (Stretch.)"""
+    decision = _decision_for(content_id)
+    if decision is None:
+        return jsonify({"error": "not_found", "message": f"No submission with content_id {content_id}."}), 404
+
+    entries = audit.entries_for(content_id)
+    appeals = [e for e in entries if e.get("event") == "appeal"]
+    return jsonify({
+        "content_id": content_id,
+        "creator_id": decision["creator_id"],
+        "status": entries[-1]["status"],
+        "guess": decision["guess"],
+        "confidence": decision["combined_score"],
+        "label": decision["label"],
+        "model_score": decision["model_score"],
+        "style_score": decision["style_score"],
+        "marker_score": decision.get("marker_score"),
+        "verified_writer": decision.get("verified_writer", False),
+        "submitted_at": decision["timestamp"],
+        "appeals": [{"timestamp": e["timestamp"], "reasoning": e["reasoning"]} for e in appeals],
+    })
+
+
+def _decision_for(content_id: str) -> dict | None:
+    """The original decision entry for an id, or None if there isn't one."""
+    return next((e for e in audit.entries_for(content_id) if e.get("status") == "decided"), None)
+
+
+# ── Verified writer (stretch) ─────────────────────────────────────────────────
+
+@app.get("/verify/prompt")
+def verify_prompt():
+    """
+    Step 1 of the verified-writer check: issue a fresh prompt.
+
+        curl "http://127.0.0.1:5000/verify/prompt?creator_id=writer_03"
+    """
+    creator_id = request.args.get("creator_id", "").strip()
+    if not creator_id:
+        return jsonify({"error": "invalid_input", "message": "creator_id is required."}), 400
+
+    challenge_id, prompt = str(uuid.uuid4()), random.choice(config.VERIFY_PROMPTS)
+    audit.log_event("verify_prompt", creator_id, challenge_id=challenge_id, prompt=prompt)
+    return jsonify({
+        "challenge_id": challenge_id,
+        "prompt": prompt,
+        "instructions": f"Answer in your own words, at least {config.VERIFY_MIN_WORDS} "
+                        f"words, within {config.VERIFY_WINDOW_MINUTES} minutes.",
+    })
+
+
+@app.post("/verify")
+def verify():
+    """
+    Step 2: score the writer's answer. Expects {creator_id, challenge_id, text}.
+    Passes if the answer is NOT labeled AI; a pass earns the credential.
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid_input", "message": "Send a JSON object."}), 400
+    creator_id, challenge_id, text = (payload.get(k) for k in ("creator_id", "challenge_id", "text"))
+    if not all(isinstance(v, str) and v.strip() for v in (creator_id, challenge_id, text)):
+        return jsonify({"error": "invalid_input", "message": "creator_id, challenge_id and text are required."}), 400
+
+    entries = [e for e in audit.read_entries() if e.get("challenge_id") == challenge_id]
+    issued = next((e for e in entries if e["event"] == "verify_prompt" and e["creator_id"] == creator_id), None)
+    if issued is None:
+        return jsonify({"error": "not_found", "message": "No prompt with that challenge_id for this creator."}), 404
+    if any(e["event"] == "verify_result" for e in entries):
+        return jsonify({"error": "already_used", "message": "That prompt was already answered. Ask for a new one."}), 409
+    deadline = datetime.fromisoformat(issued["timestamp"]) + timedelta(minutes=config.VERIFY_WINDOW_MINUTES)
+    if datetime.now(timezone.utc) > deadline:
+        return jsonify({"error": "expired", "message": "That prompt has expired. Ask for a new one."}), 410
+    if not (config.VERIFY_MIN_WORDS <= len(stylometry.words(text)) and len(text) <= config.MAX_TEXT_CHARS):
+        return jsonify({"error": "invalid_length", "message": f"Write at least {config.VERIFY_MIN_WORDS} words."}), 422
+
+    scores = _score(text)
+    guess, _ = scoring.score_to_label(scores["confidence"])
+    passed = guess != "ai"
+    audit.log_event("verify_result", creator_id, challenge_id=challenge_id, passed=passed, guess=guess, **scores)
+    return jsonify({
+        "creator_id": creator_id,
+        "verified_writer": _is_verified(creator_id),
+        "passed": passed,
+        "message": "Thanks — you're now a verified writer. Your work will show it."
+                   if passed else "This sample didn't pass. You can ask for a new prompt and try again.",
+    })
+
+
+def _is_verified(creator_id: str) -> bool:
+    """Has this creator ever passed the verified-writer check?"""
+    return any(e.get("event") == "verify_result" and e.get("passed") and e.get("creator_id") == creator_id
+               for e in audit.read_entries())
 
 
 # ── Already works ─────────────────────────────────────────────────────────────

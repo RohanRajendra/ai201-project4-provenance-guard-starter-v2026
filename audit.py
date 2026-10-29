@@ -112,6 +112,11 @@ def log_rejection(creator_id: str, reason: str, **extra) -> dict:
     })
 
 
+def log_event(event: str, creator_id: str, **fields) -> dict:
+    """Record anything else worth a trace — the verified-writer check uses it."""
+    return _append({"timestamp": _now(), "creator_id": creator_id, "event": event, **fields})
+
+
 def _append(entry: dict) -> dict:
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     line = json.dumps(entry, ensure_ascii=False)
