@@ -42,93 +42,158 @@ Two things worth knowing before you pick numbers:
   a **miss**.
 
 ---
-## 1. Expensive false positives
 
-<!-- Your criterion. It must name a number. -->
-My own writing is never labeled as AI. 0/10 paragraphs that I write myself gets a guess: "ai" in any trial, at least 6/10 get guess: "human" in every trial. 
-To test this: put the 10 paragraphs in scenarios.py under "my own writing". Each 100-300 words written with no AI help. Some (atleast 3) written as short plain sentences. Run run_eval.py thrice. For each trial, count the results with guess == "ai" and guess == "human"
+## 1. My own writing is never labeled AI
 
-ai = 0 of 10 in all 3 trials, and human ≥ 6 of 10 in all 3 trials.
+**Criterion:** Of 10 paragraphs I wrote myself, none gets `guess: "ai"` in any
+trial, and at least 6 of the 10 get `guess: "human"` in every trial.
 
+**Target:** `ai` = 0 of 10 **and** `human` ≥ 6 of 10, in all 3 trials.
 
-**Why this target:**
+**How to test:**
+1. Put the 10 paragraphs in `scenarios.py` under the scenario `"my own writing"`.
+   Each is 100–300 words, written with no AI help. At least 3 are written on
+   purpose in short, plain sentences with common words.
+2. Run `python run_eval.py` three times.
+3. In each trial, count the results with `guess == "ai"` and with
+   `guess == "human"`.
 
-Telling a human writer that their writing is AI is a very expensive mistake. The AI band needs all three signals ≥ 0.60, so if my own writing is labeled ai, the agreement rule failed on the case that it exists for. The human count exists because putting everything under the "unsure" label would pass the first half with no effort, plain writing already scores 0.85 on the model_score. 
-
----
-
-## 2. Score spread on AI text and Human text
-
-<!-- Your criterion. -->
-Across 5 AI-generated and 5 known-human paragraphs, the AI set's average confidence is at least 0.30 higher than the human set's in every trial.
-
-gap ≥ 0.30 in all 3 trials.
-
-To test: AI set: 5 paragraphs from one chat model, each made with the same prompt to generate a 150 word explanatory paragraph about xxx. using 5 different topics. Output saved as is. Prompt and model saved alongside as a comment. 
-Human set: 5 paragrahs of 100+ words published prior to December 2019, with the source added in a comment. Not to re-use paragraphs from the first criterion. 
-run_eval.py runs thrice, in each trial, compute difference between mean of confidence on AI set and mean of confidence on human set. 
-
-**Why this target:**
-
-This criterion checks that style plus markers actually reverse the measured gap on the model_score. For example if the plain human paragraph scored 0.85 and the stock AI paragraph 0.83. A gap under 0.30 would put both sets inside the 0.40–0.85 unsure band, which means the labels tell a reader nothing.
-
+**Why this target:** Telling a real writer their work is AI-generated is the
+most expensive mistake this service can make. The AI band needs all three
+signals ≥ 0.60, so if my own writing is labeled `ai`, the agreement rule failed
+on exactly the case it exists for. The human floor is there because labeling
+everything "unsure" would pass the first half with no effort — and plain
+writing already scores 0.85 on `model_score`, so I don't demand all 10.
 
 ---
 
-## 3. Label coverage on all three labels for the input. 
+## 2. AI text and human text score clearly apart
 
-<!-- Your criterion. -->
-On 9 inputs, 3 built for each band, each band's intended label comes back for at least 2 of its 3 inputs in every trial, and every label string exactly matches one of the three texts in README → Label Variants.
+**Criterion:** Across 5 AI-generated and 5 known-human paragraphs, the AI set's
+average `confidence` is at least 0.30 higher than the human set's, in every
+trial.
 
-≥ 2 of 3 per band, for all three bands, in all 3 trials, with 9 of 9 label strings
+**Target:** mean(`confidence`, AI set) − mean(`confidence`, human set) ≥ 0.30,
+in all 3 trials.
 
-To test: Use AI ×3: stock AI paragraphs that contain at least 2 phrases from markers.py's list. Use human ×3: own writing in normal style, and not reused from prior criterion 1. Use borderline ×3: merging own paragraphs and with an AI paragraph on the same topic taking half from each, joined into one text.
-Run run_eval.py thrice. For each trial, check AI inputs → ai, human → human, borderline → unsure, and that each label equals the README text for its guess.
+**How to test:**
+1. **AI set** (scenario `"spread ai"`): 5 paragraphs from one chat model, each
+   made with the same prompt — *"Write a 150-word explanatory paragraph about
+   [topic]."* — on 5 different topics. Save the output exactly as generated, with
+   the model name and prompt in a comment.
+2. **Human set** (scenario `"spread human"`): 5 paragraphs of 100+ words
+   published before December 2019, with each source in a comment. None reused
+   from criterion 1.
+3. Run `python run_eval.py` three times. In each trial, subtract the human
+   set's mean `confidence` from the AI set's.
 
-**Why this target:**
-
-Criterion 1 establishes a very cautious approach which might mean that the AI label could become unreachable making the detector useless in practice. if any signal stays under 0.60, the 0.84 cap makes the ai label unreachable. Borderline text is where the signals should split, so it is the input that should land in unsure. 
-
-
----
-
-## 4. Appeals changes the status and is recorded. 
-
-<!-- Your criterion. -->
-For 5 real content_ids, POST /appeal returns under_review and adds an appeal entry to the log while the original decision entry stays unchanged. An unknown id returns 404 and writes nothing.
-5/5 appeals return 200 with status: "under_review". 5/5 ids get exactly one new log entry with event: "appeal", status: "under_review" and the exact reasoning, placed after the decision entry. 5/5 original decided entries are byte-identical to the saved log. Unknown id → 404 not_found with no new entry. Missing reasoning → 400. If built, /content/id shows under_review for 5/5.
-
-To test: Submit 5 texts (at least one that comes back human and one unsure). Note each content_id. Save the GET /log output. Send POST /appeal for each id with reasoning: "I wrote this myself". Send one appeal with a made-up UUID, and one valid-id appeal with reasoning missing. Run GET /log again and compare. GET /content/id for each.
-Run this thrice for three trials. 
-
-**Why this target:**
-Appeals are the only way to fix false positives, so a dropped appeal leaves a writer with no routes for remedies or fixes to their situation. The original decision has to survive unchanged. The log is the evidence for dispute. 
-
+**Why this target:** On `model_score` alone the gap runs the wrong way — my
+plain human test paragraph scored 0.85 and a stock AI paragraph 0.83. This
+criterion checks that the style and marker signals actually reverse that. A
+gap under 0.30 would leave both sets inside the 0.40–0.85 unsure band, and the
+labels would tell a reader nothing.
 
 ---
 
-## 5. Bad input refused, logged and not scored. 
+## 3. All three labels are reachable
 
-<!-- Your criterion. -->
-Each of 9 malformed requests gets its specified status code (never a 200 or 500) and a rejected log entry. A text of exactly 10,000 characters is still accepted.
-Per trial in the tests: 9/9 malformed requests return the listed code, with 0 returning 200 or 500. 9 new rejected log entries with a reason. 0 new decided entries for them. The boundary text returns 200.
-To test: Scenario "bad input" with these bodies:
-{"creator_id":"x"} → 400
-{"text":"","creator_id":"x"} → 400
-{"text":" \n\t","creator_id":"x"} → 400
-{"text":null,"creator_id":"x"} → 400
-{"text":123,"creator_id":"x"} → 400
-{"text":"a"*10001,"creator_id":"x"} → 413
-{"text":"word "*50000,"creator_id":"x"} → 413
-{"text":"Hi","creator_id":"x"} → 422 (minimum is 20 words, pinned in README contract)
-Put the boundary body {"text": <10,000 chars of real prose>, "creator_id":"x"} (→ 200) in a separate scenario.
-By hand, send a non-JSON body: curl -X POST .../submit -H "Content-Type: application/json" -d 'not json' → 400.
-Run all 3 trials. Check status in the run_eval report. In GET /log, count the new event: "rejected" entries and check that none of them has a content_id.
+**Criterion:** On 9 inputs, 3 built for each label, each label comes back for
+at least 2 of its 3 inputs in every trial, and every `label` string exactly
+matches one of the three texts in README → Label Variants.
 
-**Why this target:**
+**Target:** ≥ 2 of 3 per label, for all three labels, in all 3 trials, and
+9 of 9 `label` strings matching the README.
 
-Mainly tackles the edge cases. A blank or 250,000-character text that gets scored would show a writer a confident-looking label on nothing, and a 500 tells the calling site nothing it can act on. The boundary case keeps "reject everything" from passing, because the 10,000-character cap is a contract the site is promised.
+**How to test:**
+1. Scenario `"coverage"`:
+   - **AI ×3:** stock AI paragraphs containing at least 2 phrases from the
+     list in `markers.py`.
+   - **Human ×3:** my own writing in my normal style, not reused from
+     criterion 1.
+   - **Borderline ×3:** half of one of my own paragraphs joined to half of an
+     AI paragraph on the same topic.
+2. Run `python run_eval.py` three times.
+3. In each trial, check AI inputs → `ai`, human → `human`, borderline →
+   `unsure`, and that each `label` equals the README text for its `guess`.
 
+**Why this target:** My thresholds are deliberately cautious, and that has a
+cost: if any signal stays under 0.60, the 0.84 cap makes the `ai` label
+unreachable and the detector is useless in practice. Borderline text is where
+the signals should split, so it is the input that should land in unsure.
+
+---
+
+## 4. Every appeal changes status and is recorded
+
+**Criterion:** For 5 real `content_id`s, `POST /appeal` returns `under_review`
+and adds an appeal entry to the log while the original decision entry stays
+unchanged. An unknown id returns 404 and writes nothing.
+
+**Target, per trial:**
+- 5 of 5 appeals return 200 with `status: "under_review"`.
+- 5 of 5 ids get exactly one new log entry with `event: "appeal"`,
+  `status: "under_review"` and the exact reasoning sent, placed after the
+  decision entry.
+- 5 of 5 original `decided` entries are byte-identical to the saved log.
+- An unknown id → 404 `not_found`, with no new log entry.
+- Missing `reasoning` → 400.
+- `GET /content/<id>` (stretch) shows `under_review` for 5 of 5.
+
+**How to test** (by hand — `run_eval.py` only calls `/submit`):
+1. Submit 5 texts, at least one that comes back `human` and one `unsure`.
+   Note each `content_id`.
+2. Save the output of `GET /log`.
+3. Send `POST /appeal` for each id with `reasoning: "I wrote this myself."`
+4. Send one appeal with a made-up UUID, and one with a valid id but no
+   `reasoning`.
+5. Run `GET /log` again and compare against the saved copy. Call
+   `GET /content/<id>` for each id.
+6. Repeat three times, for three trials.
+
+**Why this target:** An appeal is the only remedy a writer has against a false
+positive, so a single dropped appeal leaves someone wrongly marked with no
+record that they objected. The original decision has to survive unchanged,
+because the append-only log is the evidence in a dispute.
+
+---
+
+## 5. Bad input is refused, logged, and never scored
+
+**Criterion:** Each of 9 malformed requests gets its specified status code
+(never 200 or 500) and a `rejected` log entry. A text of exactly 10,000
+characters is still accepted.
+
+**Target, per trial:** 9 of 9 malformed requests return the listed code, 0
+return 200 or 500; 9 new `rejected` log entries, each with a `reason`; 0 new
+`decided` entries for them; the 10,000-character text returns 200.
+
+**How to test:**
+1. Scenario `"bad input"` with these `bodies`:
+
+   | Body | Expected |
+   |---|---|
+   | `{"creator_id": "x"}` (no `text`) | 400 |
+   | `{"text": "", "creator_id": "x"}` | 400 |
+   | `{"text": " \n\t", "creator_id": "x"}` (whitespace only) | 400 |
+   | `{"text": null, "creator_id": "x"}` | 400 |
+   | `{"text": 123, "creator_id": "x"}` | 400 |
+   | `{"text": "a" * 10001, "creator_id": "x"}` (10,001 chars) | 413 |
+   | `{"text": "word " * 50000, "creator_id": "x"}` (250,000 chars) | 413 |
+   | `{"text": "Hi", "creator_id": "x"}` (under the 20-word minimum) | 422 |
+
+2. Put the boundary body — exactly 10,000 characters of real prose — in a
+   separate scenario. Expected: 200.
+3. By hand, send a non-JSON body (the 9th case):
+   `curl -X POST http://127.0.0.1:5000/submit -H "Content-Type: application/json" -d 'not json'`
+   → 400.
+4. Run all 3 trials. Check each status code in the `run_eval.py` report. In
+   `GET /log`, count the new `event: "rejected"` entries and check none of them
+   has a `content_id`.
+
+**Why this target:** A blank or 250,000-character text that gets scored would
+show a writer a confident-looking label on nothing, and a 500 tells the calling
+site nothing it can act on. The boundary case stops "reject everything" from
+passing, because the 10,000-character cap is a promise the site relies on.
 
 ---
 
