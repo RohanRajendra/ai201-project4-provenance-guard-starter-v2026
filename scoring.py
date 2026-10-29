@@ -54,6 +54,11 @@ LABELS = {
 }
 
 
+# Appended to any label on work by a creator who passed the verified-writer
+# check (stretch). It adds a fact about the writer; it never changes the guess.
+VERIFIED_NOTE = "This writer has completed our live writing check."
+
+
 def score_to_label(score: float) -> tuple[str, str]:
     """
     Turn a score into (guess, label_text).

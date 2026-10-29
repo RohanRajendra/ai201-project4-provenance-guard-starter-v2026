@@ -46,6 +46,9 @@
    reads as human the creator earns a `verified_writer` credential. Every later
    submission from that creator shows it in the response and the label.
 
+   > *As built:* "reads as human" means **not labeled AI** — human or unsure
+   > both pass. Why is under *Verified-human path*.
+
 ---
 
 ## What This Does
@@ -55,7 +58,8 @@ score, and a sentence the reader sees. The path:
 
 1. **Arrives at `POST /submit`** (`app.py::submit`) as JSON `{text, creator_id}`.
    The route rejects anything it can't judge — missing, empty, non-string, or
-   over the length cap — with a `400`/`413` and logs the rejection.
+   over the length cap, or under 20 words — with a `400`/`413`/`422` and logs
+   the rejection.
 2. **Gets an id.** A `content_id` (UUID) is minted so the writer can appeal and
    the item can be looked up later.
 3. **Signal one reads it** (`detector.py::model_signal`): gpt2 measures how
@@ -115,6 +119,17 @@ signal to mean something. Every rejection is logged with `audit.log_rejection`.
 Errors: `400` for missing fields, `404 {"error": "not_found"}` for an unknown
 `content_id`.
 
+**`GET /content/<id>`** (stretch) → the item's `status`, scores, `label`,
+`verified_writer` and any `appeals`; `404` if unknown.
+
+**`GET /verify/prompt?creator_id=…`** → `{challenge_id, prompt, instructions}`.
+**`POST /verify`** `{creator_id, challenge_id, text}` →
+`{creator_id, passed, verified_writer, message}`;
+`400` missing fields, `404` unknown challenge, `409` already answered,
+`410` expired, `422` under 60 words or over 10,000 characters. `/verify/prompt`
+returns `400` without a `creator_id`. (Stretch — see
+*Verified-human path*.)
+
 ### Tracing the false positive
 
 A student writing in their second language submits a plain, honest paragraph —
@@ -163,7 +178,7 @@ AI-likeness between two anchors:
 |---|---|---|---|---|
 | `sentence_length_spread` | stdev / mean of sentence lengths | 0.65 | 0.25 | 0.4 |
 | `type_token_ratio` | unique words / total, averaged over 50-word windows | 0.86 | 0.72 | 0.2 |
-| `punctuation_density` | `; : ! ? ( ) — – … "` per 100 words | 4.0 | 0.0 | 0.4 |
+| `punctuation_density` | `; : ! ? ( ) — – -- … "` per 100 words | 4.0 | 0.0 | 0.4 |
 
 Under 3 sentences the spread measure is replaced by a neutral 0.5.
 
@@ -187,7 +202,8 @@ half the weight of the other two.
 
 **What it measures:** How often the text uses phrases generated prose leans on
 — "it is important to note", "moreover", "plays a crucial role", "in
-conclusion" — per 100 words (`markers.py::marker_signal`).
+conclusion" — per 100 words (`markers.py::marker_signal`), scaled so 3
+markers per 100 words (`SATURATION_RATE`) or more scores 1.0.
 
 **Why that might differ between human and AI writing:** Chat models are tuned
 toward a recognisable register of signposting and hedging; most people don't
@@ -251,7 +267,7 @@ marker signal finds nothing (0.00). The weighted average is 0.63, and because
 the marker signal is under the 0.60 floor the cap applies anyway: it lands in
 **unsure**, not AI. That's exactly the writer from *Tracing the false
 positive*. With only the first two signals averaged it would have scored
-0.849 — a hair under the AI line, held there by luck rather than by a rule.
+0.848 — a hair under the AI line, held there by luck rather than by a rule.
 
 
 ---
@@ -265,6 +281,9 @@ positive*. With only the first two signals averaged it would have scored
 | high-confidence AI | 0.85 – 1.00 (only when all three signals are ≥ 0.60) | Our check found strong signs that this piece may have been written by an AI tool, but this is not proof and the check can be wrong. Nothing has been taken down. If you wrote this, you can ask for a person to review it and tell them how you wrote it. |
 
 The text lives in `scoring.py::LABELS`; `scoring.py::score_to_label` picks one.
+For a creator who holds the verified-writer credential (stretch), one sentence
+is appended to whichever label applies: *"This writer has completed our live
+writing check."* The guess and range don't change.
 All three were reached in the Sample Run below (0.24 → human, 0.63 → unsure,
 0.88 → AI).
 
@@ -286,20 +305,21 @@ besides feel accused.
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "I went to the store today. I bought milk and bread. The store was busy because it was Saturday. I saw my friend Maria there. We talked for a while about her new job. She likes it but the hours are long. Then I went home and made dinner for my family. We ate rice and chicken. After dinner I helped my son with his homework.", "creator_id": "writer_03"}'
+  -d '{"text": "I went to the store today. I bought milk and bread. The store was busy because it was Saturday. I saw my friend Maria there. We talked for a while about her new job. She likes it but the hours are long. Then I went home and made dinner for my family. We ate rice and chicken. After dinner I helped my son with his homework.", "creator_id": "writer_05"}'
 ```
 
 ```json
 {
   "confidence": 0.6293,
-  "content_id": "e5d26436-c25a-4af6-bb05-6c957c85062b",
-  "creator_id": "writer_03",
+  "content_id": "3a951b80-ddfd-4362-b698-4026ed594697",
+  "creator_id": "writer_05",
   "guess": "unsure",
   "label": "We couldn't tell whether this piece was written by a person or by an AI tool. Many people's own writing gets this result, so it is not a sign that anything was done wrong. If you wrote this, you can ask for a person to review it.",
   "marker_score": 0.0,
   "model_score": 0.8209,
   "status": "decided",
-  "style_score": 0.8756
+  "style_score": 0.8756,
+  "verified_writer": false
 }
 ```
 
@@ -315,12 +335,12 @@ The other two labels, same request shape:
 ```bash
 $ curl -X POST http://127.0.0.1:5000/appeal \
   -H "Content-Type: application/json" \
-  -d '{"content_id": "e5d26436-c25a-4af6-bb05-6c957c85062b", "reasoning": "I wrote this myself about my Saturday. English is my second language, so I keep my sentences short."}'
+  -d '{"content_id": "3a951b80-ddfd-4362-b698-4026ed594697", "reasoning": "I wrote this myself about my Saturday. English is my second language, so I keep my sentences short."}'
 ```
 
 ```json
 {
-  "content_id": "e5d26436-c25a-4af6-bb05-6c957c85062b",
+  "content_id": "3a951b80-ddfd-4362-b698-4026ed594697",
   "message": "Thanks — your appeal is recorded. A person will review this piece, and it shows as under review until then.",
   "status": "under_review"
 }
@@ -339,23 +359,24 @@ $ curl "http://127.0.0.1:5000/log?limit=2"
   "entries": [
     {
       "combined_score": 0.6293,
-      "content_id": "e5d26436-c25a-4af6-bb05-6c957c85062b",
-      "creator_id": "writer_03",
+      "content_id": "3a951b80-ddfd-4362-b698-4026ed594697",
+      "creator_id": "writer_05",
       "guess": "unsure",
       "label": "We couldn't tell whether this piece was written by a person or by an AI tool. Many people's own writing gets this result, so it is not a sign that anything was done wrong. If you wrote this, you can ask for a person to review it.",
       "marker_score": 0.0,
       "model_score": 0.8209,
       "status": "decided",
       "style_score": 0.8756,
-      "timestamp": "2026-10-29T02:09:48+00:00"
+      "timestamp": "2026-10-29T03:00:18+00:00",
+      "verified_writer": false
     },
     {
-      "content_id": "e5d26436-c25a-4af6-bb05-6c957c85062b",
-      "creator_id": "writer_03",
+      "content_id": "3a951b80-ddfd-4362-b698-4026ed594697",
+      "creator_id": "writer_05",
       "event": "appeal",
       "reasoning": "I wrote this myself about my Saturday. English is my second language, so I keep my sentences short.",
       "status": "under_review",
-      "timestamp": "2026-10-29T02:09:48+00:00"
+      "timestamp": "2026-10-29T03:00:18+00:00"
     }
   ]
 }
@@ -364,7 +385,7 @@ $ curl "http://127.0.0.1:5000/log?limit=2"
 **`GET /content/<id>` (stretch)** — the item's current status:
 
 ```bash
-$ curl http://127.0.0.1:5000/content/e5d26436-c25a-4af6-bb05-6c957c85062b
+$ curl http://127.0.0.1:5000/content/3a951b80-ddfd-4362-b698-4026ed594697
 ```
 
 ```json
@@ -372,19 +393,20 @@ $ curl http://127.0.0.1:5000/content/e5d26436-c25a-4af6-bb05-6c957c85062b
   "appeals": [
     {
       "reasoning": "I wrote this myself about my Saturday. English is my second language, so I keep my sentences short.",
-      "timestamp": "2026-10-29T02:09:48+00:00"
+      "timestamp": "2026-10-29T03:00:18+00:00"
     }
   ],
   "confidence": 0.6293,
-  "content_id": "e5d26436-c25a-4af6-bb05-6c957c85062b",
-  "creator_id": "writer_03",
+  "content_id": "3a951b80-ddfd-4362-b698-4026ed594697",
+  "creator_id": "writer_05",
   "guess": "unsure",
   "label": "We couldn't tell whether this piece was written by a person or by an AI tool. Many people's own writing gets this result, so it is not a sign that anything was done wrong. If you wrote this, you can ask for a person to review it.",
   "marker_score": 0.0,
   "model_score": 0.8209,
   "status": "under_review",
   "style_score": 0.8756,
-  "submitted_at": "2026-10-29T02:09:48+00:00"
+  "submitted_at": "2026-10-29T03:00:18+00:00",
+  "verified_writer": false
 }
 ```
 
@@ -395,6 +417,96 @@ and logs:
 ```json
 {"creator_id": "x", "event": "rejected", "http_status": 422, "reason": "too_short", "status": "rejected", "timestamp": "2026-10-29T01:56:07+00:00"}
 ```
+
+---
+
+## Verified-human path (stretch)
+
+**The extra step:** a writer asks for a prompt, then answers it in their own
+words — at least 60 words, within 15 minutes, one answer per prompt. The answer
+is scored by the same three signals. **It passes if it is not labeled AI**:
+human *or* unsure both count, so the plain and second-language writers the
+detector misreads can still earn it. A pass earns the `verified_writer`
+credential for that `creator_id`, recorded in the audit log.
+
+**What it changed:** `/submit` and `GET /content/<id>` now return
+`verified_writer`, and a verified creator's label gets one extra sentence —
+*"This writer has completed our live writing check."* The credential never changes the
+score or the guess; it adds a fact about the writer, not about the text.
+Code: `app.py::verify_prompt`, `app.py::verify`, `app.py::_is_verified`;
+settings in `config.py` (`VERIFY_*`).
+
+**What it can't see:** Who is typing. Anyone can paste an AI answer that
+avoids stock phrases, and the check doesn't compare the answer's topic to the
+prompt. The credential means "completed a live check", not "proven human".
+
+**Step 1 — get a prompt**
+
+```bash
+$ curl "http://127.0.0.1:5000/verify/prompt?creator_id=writer_04"
+```
+
+```json
+{
+  "challenge_id": "9379df02-1807-482d-ad8d-e492a09525fe",
+  "instructions": "Answer in your own words, at least 60 words, within 15 minutes.",
+  "prompt": "Describe the street you live on to someone who has never seen it."
+}
+```
+
+**Step 2 — answer it**
+
+```bash
+$ curl -X POST http://127.0.0.1:5000/verify \
+  -H "Content-Type: application/json" \
+  -d '{"creator_id": "writer_04", "challenge_id": "9379df02-1807-482d-ad8d-e492a09525fe", "text": "My street is short and a little noisy. There is a bakery at the corner and the smell comes in my window at six in the morning. Most houses are white with green doors. An old man sits outside number twelve every day with his dog. Children play football there after school. In winter it is very quiet and dark early. I like it because people say hello."}'
+```
+
+```json
+{
+  "creator_id": "writer_04",
+  "message": "Thanks — you're now a verified writer. Your work will show it.",
+  "passed": true,
+  "verified_writer": true
+}
+```
+
+Log entry:
+
+```json
+{
+  "challenge_id": "9379df02-1807-482d-ad8d-e492a09525fe",
+  "confidence": 0.4061,
+  "creator_id": "writer_04",
+  "event": "verify_result",
+  "guess": "unsure",
+  "marker_score": 0.0,
+  "model_score": 0.5169,
+  "passed": true,
+  "style_score": 0.5906,
+  "timestamp": "2026-10-29T02:59:52+00:00"
+}
+```
+
+**The credential on an item** — writer_04's next submission:
+
+```json
+{
+  "confidence": 0.2376,
+  "content_id": "5b454a78-5ee0-4135-9c8e-252356b3078b",
+  "creator_id": "writer_04",
+  "guess": "human",
+  "label": "This piece looks like it was written by a person. This writer has completed our live writing check.",
+  "marker_score": 0.0,
+  "model_score": 0.4728,
+  "status": "decided",
+  "style_score": 0.0046,
+  "verified_writer": true
+}
+```
+
+A reused prompt returns `409 already_used`, another creator's prompt `404`,
+and a stock AI answer is scored `ai` and fails (`"passed": false`).
 
 ---
 

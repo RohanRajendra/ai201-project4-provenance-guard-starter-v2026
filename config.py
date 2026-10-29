@@ -55,6 +55,22 @@ MAX_TEXT_CHARS = 10_000
 MIN_WORDS = 20
 
 
+# ─── Verified writer (stretch) ───────────────────────────────────────────────
+# A writer answers a fresh prompt within the window. The sample passes if it
+# is NOT labeled AI — human or unsure both count, so the plain writers the
+# detector misreads can still earn it.
+
+VERIFY_MIN_WORDS = 60
+VERIFY_WINDOW_MINUTES = 15
+VERIFY_PROMPTS = [
+    "Describe a meal you remember from childhood and who was there.",
+    "Tell us about a time you got lost, and how you found your way.",
+    "What is something you changed your mind about, and what changed it?",
+    "Describe the street you live on to someone who has never seen it.",
+    "Write about an object you own that you would never throw away.",
+]
+
+
 # ─── Scoring (Milestone 4) ───────────────────────────────────────────────────
 # How much each signal counts toward the combined score. The model signal gets
 # half: it's the only one that reads the words. Style and markers split the

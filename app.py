@@ -21,11 +21,15 @@ Routes:
     POST /submit      judge a piece of text
     POST /appeal      a writer contests a decision
     GET  /content/<id> one item's current status (stretch)
+    GET  /verify/prompt  verified-writer check, step 1 (stretch)
+    POST /verify      verified-writer check, step 2 (stretch)
     GET  /log         the audit log. Already works
     GET  /health      is the service up, and is the model loaded
 """
 
+import random
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from flask import Flask, jsonify, request
 
@@ -182,28 +186,40 @@ def submit():
         return _reject(creator_id, 422, "too_short", f"text needs at least {config.MIN_WORDS} words to score.")
 
     content_id = str(uuid.uuid4())
-    model_score = detector.model_signal(text)
-    style_score = stylometry.style_signal(text)
-    marker_score = markers.marker_signal(text)
-    confidence = scoring.combine_signals(model_score, style_score, marker_score)
-    guess, label = scoring.score_to_label(confidence)
+    scores = _score(text)
+    guess, label = scoring.score_to_label(scores["confidence"])
+    verified = _is_verified(creator_id)
+    if verified:
+        label += " " + scoring.VERIFIED_NOTE
 
     audit.log_decision(
         content_id=content_id, creator_id=creator_id, guess=guess,
-        model_score=model_score, style_score=style_score,
-        combined_score=confidence, label=label, marker_score=marker_score,
+        model_score=scores["model_score"], style_score=scores["style_score"],
+        combined_score=scores["confidence"], label=label,
+        marker_score=scores["marker_score"], verified_writer=verified,
     )
     return jsonify({
         "content_id": content_id,
         "creator_id": creator_id,
         "guess": guess,
-        "confidence": confidence,
         "label": label,
+        **scores,
+        "status": "decided",
+        "verified_writer": verified,
+    })
+
+
+def _score(text: str) -> dict:
+    """All three signals and the combined score for one text."""
+    model_score = detector.model_signal(text)
+    style_score = stylometry.style_signal(text)
+    marker_score = markers.marker_signal(text)
+    return {
+        "confidence": scoring.combine_signals(model_score, style_score, marker_score),
         "model_score": model_score,
         "style_score": style_score,
         "marker_score": marker_score,
-        "status": "decided",
-    })
+    }
 
 
 def _reject(creator_id: str, code: int, error: str, message: str):
@@ -263,6 +279,7 @@ def content(content_id):
         "model_score": decision["model_score"],
         "style_score": decision["style_score"],
         "marker_score": decision.get("marker_score"),
+        "verified_writer": decision.get("verified_writer", False),
         "submitted_at": decision["timestamp"],
         "appeals": [{"timestamp": e["timestamp"], "reasoning": e["reasoning"]} for e in appeals],
     })
@@ -271,6 +288,73 @@ def content(content_id):
 def _decision_for(content_id: str) -> dict | None:
     """The original decision entry for an id, or None if there isn't one."""
     return next((e for e in audit.entries_for(content_id) if e.get("status") == "decided"), None)
+
+
+# ── Verified writer (stretch) ─────────────────────────────────────────────────
+
+@app.get("/verify/prompt")
+def verify_prompt():
+    """
+    Step 1 of the verified-writer check: issue a fresh prompt.
+
+        curl "http://127.0.0.1:5000/verify/prompt?creator_id=writer_03"
+    """
+    creator_id = request.args.get("creator_id", "").strip()
+    if not creator_id:
+        return jsonify({"error": "invalid_input", "message": "creator_id is required."}), 400
+
+    challenge_id, prompt = str(uuid.uuid4()), random.choice(config.VERIFY_PROMPTS)
+    audit.log_event("verify_prompt", creator_id, challenge_id=challenge_id, prompt=prompt)
+    return jsonify({
+        "challenge_id": challenge_id,
+        "prompt": prompt,
+        "instructions": f"Answer in your own words, at least {config.VERIFY_MIN_WORDS} "
+                        f"words, within {config.VERIFY_WINDOW_MINUTES} minutes.",
+    })
+
+
+@app.post("/verify")
+def verify():
+    """
+    Step 2: score the writer's answer. Expects {creator_id, challenge_id, text}.
+    Passes if the answer is NOT labeled AI; a pass earns the credential.
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid_input", "message": "Send a JSON object."}), 400
+    creator_id, challenge_id, text = (payload.get(k) for k in ("creator_id", "challenge_id", "text"))
+    if not all(isinstance(v, str) and v.strip() for v in (creator_id, challenge_id, text)):
+        return jsonify({"error": "invalid_input", "message": "creator_id, challenge_id and text are required."}), 400
+
+    entries = [e for e in audit.read_entries() if e.get("challenge_id") == challenge_id]
+    issued = next((e for e in entries if e["event"] == "verify_prompt" and e["creator_id"] == creator_id), None)
+    if issued is None:
+        return jsonify({"error": "not_found", "message": "No prompt with that challenge_id for this creator."}), 404
+    if any(e["event"] == "verify_result" for e in entries):
+        return jsonify({"error": "already_used", "message": "That prompt was already answered. Ask for a new one."}), 409
+    deadline = datetime.fromisoformat(issued["timestamp"]) + timedelta(minutes=config.VERIFY_WINDOW_MINUTES)
+    if datetime.now(timezone.utc) > deadline:
+        return jsonify({"error": "expired", "message": "That prompt has expired. Ask for a new one."}), 410
+    if not (config.VERIFY_MIN_WORDS <= len(stylometry.words(text)) and len(text) <= config.MAX_TEXT_CHARS):
+        return jsonify({"error": "invalid_length", "message": f"Write at least {config.VERIFY_MIN_WORDS} words."}), 422
+
+    scores = _score(text)
+    guess, _ = scoring.score_to_label(scores["confidence"])
+    passed = guess != "ai"
+    audit.log_event("verify_result", creator_id, challenge_id=challenge_id, passed=passed, guess=guess, **scores)
+    return jsonify({
+        "creator_id": creator_id,
+        "verified_writer": _is_verified(creator_id),
+        "passed": passed,
+        "message": "Thanks — you're now a verified writer. Your work will show it."
+                   if passed else "This sample didn't pass. You can ask for a new prompt and try again.",
+    })
+
+
+def _is_verified(creator_id: str) -> bool:
+    """Has this creator ever passed the verified-writer check?"""
+    return any(e.get("event") == "verify_result" and e.get("passed") and e.get("creator_id") == creator_id
+               for e in audit.read_entries())
 
 
 # ── Already works ─────────────────────────────────────────────────────────────
