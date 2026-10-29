@@ -237,14 +237,49 @@ connectives gets marked up.
      two off the response, so leaving them out costs you next unit's
      diagnostics. -->
 
+*Milestone 3 run — one signal, placeholders for confidence and label:*
+
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "...", "creator_id": "..."}'
+  -d '{"text": "Artificial intelligence is transforming the way we live and work. It is important to note that these technologies offer significant benefits. Moreover, they present challenges that must be carefully considered.", "creator_id": "writer_01"}'
 ```
 
 ```json
+{
+  "confidence": null,
+  "content_id": "a522fc16-f200-4346-a294-d435bf25ee3c",
+  "creator_id": "writer_01",
+  "guess": null,
+  "label": "PLACEHOLDER \u2014 scoring not built yet",
+  "model_score": 0.8515,
+  "status": "decided",
+  "style_score": null
+}
+```
 
+Log entry (`GET /log?limit=1`):
+
+```json
+{
+  "combined_score": null,
+  "content_id": "a522fc16-f200-4346-a294-d435bf25ee3c",
+  "creator_id": "writer_01",
+  "guess": null,
+  "label": "PLACEHOLDER \u2014 scoring not built yet",
+  "model_score": 0.8515,
+  "status": "decided",
+  "style_score": null,
+  "timestamp": "2026-10-29T01:56:07+00:00"
+}
+```
+
+A refused request still leaves a trace — `{"text": "Hi", "creator_id": "x"}`
+returns `422 {"error": "too_short", "message": "text needs at least 20 words to score."}`
+and logs:
+
+```json
+{"creator_id": "x", "event": "rejected", "http_status": 422, "reason": "too_short", "status": "rejected", "timestamp": "2026-10-29T01:56:07+00:00"}
 ```
 
 **An appeal**

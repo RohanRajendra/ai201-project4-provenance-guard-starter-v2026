@@ -1,0 +1,7 @@
+{"timestamp": "2026-10-29T01:56:07+00:00", "content_id": "a522fc16-f200-4346-a294-d435bf25ee3c", "creator_id": "writer_01", "guess": null, "model_score": 0.8515, "style_score": null, "combined_score": null, "label": "PLACEHOLDER — scoring not built yet", "status": "decided"}
+{"timestamp": "2026-10-29T01:56:07+00:00", "creator_id": "x", "event": "rejected", "status": "rejected", "reason": "invalid_input", "http_status": 400}
+{"timestamp": "2026-10-29T01:56:07+00:00", "creator_id": "x", "event": "rejected", "status": "rejected", "reason": "invalid_input", "http_status": 400}
+{"timestamp": "2026-10-29T01:56:07+00:00", "creator_id": "x", "event": "rejected", "status": "rejected", "reason": "invalid_input", "http_status": 400}
+{"timestamp": "2026-10-29T01:56:07+00:00", "creator_id": "x", "event": "rejected", "status": "rejected", "reason": "too_short", "http_status": 422}
+{"timestamp": "2026-10-29T01:56:07+00:00", "creator_id": "unknown", "event": "rejected", "status": "rejected", "reason": "invalid_input", "http_status": 400}
+{"timestamp": "2026-10-29T01:56:07+00:00", "creator_id": "x", "event": "rejected", "status": "rejected", "reason": "too_long", "http_status": 413}
