@@ -96,7 +96,8 @@ score, and a sentence the reader sees. The path:
 
 Errors: `400 {"error": "invalid_input", "message": ...}` for a missing / empty /
 non-string field or a non-JSON body; `413 {"error": "too_long", ...}` above the
-cap; `422 {"error": "too_short", ...}` when the model can't score it.
+cap; `422 {"error": "too_short", ...}` under 20 words — too little for any
+signal to mean something. Every rejection is logged with `audit.log_rejection`.
 
 **`POST /appeal`**
 
