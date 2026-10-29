@@ -515,14 +515,17 @@ and a stock AI answer is scored `ai` and fails (`"passed": false`).
 **Moment 1**
 
 - *What I asked for:*
+Calibrate the style signal. Run five reference texts (clearly AI, clearly human, plain human, formal human, lightly-edited AI) through its three measures and set the anchors from the results.
 - *What came back:*
+Vocabulary variety (type-token ratio) ran backwards. The stock AI paragraph had the most varied vocabulary of all five (0.92), because generated prose avoids repeating words. Weighted as planned, that measure would have pushed AI text toward “human”.
 - *What I changed:*
+I didn’t drop the measure or flip its direction to fit five samples. I cut its weight in stylometry.py::style_signal to 0.2, with sentence-length spread and punctuation at 0.4 each. I also wrote the finding up in the README so unit 8 can check whether it holds on more text.
 
 **Moment 2**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* An agent to draft the three label texts, then reread each one as the writer receiving it. I focused on “unsure”, the label most honest writers will see.
+- *What came back:* The first unsure draft said the result was “common for clear, simple writing.” Read as the writer, it landed as an insult (“They’re calling my writing simple. That stings.”), and it gave the writer nothing they could do.
+- *What I changed:* I removed every description of the writing (“simple”, “plain”). The label now puts the uncertainty on the service (“We couldn’t tell…”), says this result is common for people’s own writing, and ends with the same review step as the AI label. The same pass added “Nothing has been taken down” to the AI label and changed “several signs” to “strong signs” to match how confident that band is.
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
