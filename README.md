@@ -258,72 +258,133 @@ positive*. With only the first two signals averaged it would have scored
 
 ## Label Variants
 
-<!-- The exact text of all three labels, as a reader would see them, and the
-     score range each covers.
-
-     Write them for someone who has never heard the word "threshold". -->
-
 | Label | Score range | The exact text a reader sees |
 |---|---|---|
-| high-confidence human |  |  |
-| unsure |  |  |
-| high-confidence AI |  |  |
+| high-confidence human | 0.00 – under 0.40 | This piece looks like it was written by a person. |
+| unsure | 0.40 – under 0.85 | We couldn't tell whether this piece was written by a person or by an AI tool. Many people's own writing gets this result, so it is not a sign that anything was done wrong. If you wrote this, you can ask for a person to review it. |
+| high-confidence AI | 0.85 – 1.00 (only when all three signals are ≥ 0.60) | Our check found strong signs that this piece may have been written by an AI tool, but this is not proof and the check can be wrong. Nothing has been taken down. If you wrote this, you can ask for a person to review it and tell them how you wrote it. |
 
-**Why I worded the "unsure" one this way:**
-<!-- It's the hardest of the three. It has to admit uncertainty without
-     sounding like an accusation, because the person reading it may well have
-     written every word themselves. -->
+The text lives in `scoring.py::LABELS`; `scoring.py::score_to_label` picks one.
+All three were reached in the Sample Run below (0.24 → human, 0.63 → unsure,
+0.88 → AI).
 
-
+**Why I worded the "unsure" one this way:** It's the label many honest
+writers will see — second-language and younger writers whose plain, even
+sentences look machine-like to the check. So it puts the uncertainty on us
+("we couldn't tell"), says outright that this result is common for people's
+own writing and isn't a sign of wrongdoing, and never describes the writing
+("simple", "plain"), because that reads as a judgment of the writer. It ends
+with the same review step as the AI label, so the writer has something to do
+besides feel accused.
 
 ---
 
 ## Sample Run
 
-<!-- One submission and one appeal, pasted as text: the request, the response,
-     and the log entries. -->
-
-**A submission**
-
-<!-- The response needs content_id, guess, confidence, label, AND both
-     signal scores - model_score and style_score. Unit 8's tools read those
-     two off the response, so leaving them out costs you next unit's
-     diagnostics. -->
-
-*Milestone 3 run — one signal, placeholders for confidence and label:*
+**A submission** — the plain-human paragraph from *Tracing the false positive*:
 
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "Artificial intelligence is transforming the way we live and work. It is important to note that these technologies offer significant benefits. Moreover, they present challenges that must be carefully considered.", "creator_id": "writer_01"}'
+  -d '{"text": "I went to the store today. I bought milk and bread. The store was busy because it was Saturday. I saw my friend Maria there. We talked for a while about her new job. She likes it but the hours are long. Then I went home and made dinner for my family. We ate rice and chicken. After dinner I helped my son with his homework.", "creator_id": "writer_03"}'
 ```
 
 ```json
 {
-  "confidence": null,
-  "content_id": "a522fc16-f200-4346-a294-d435bf25ee3c",
-  "creator_id": "writer_01",
-  "guess": null,
-  "label": "PLACEHOLDER \u2014 scoring not built yet",
-  "model_score": 0.8515,
+  "confidence": 0.6293,
+  "content_id": "e5d26436-c25a-4af6-bb05-6c957c85062b",
+  "creator_id": "writer_03",
+  "guess": "unsure",
+  "label": "We couldn't tell whether this piece was written by a person or by an AI tool. Many people's own writing gets this result, so it is not a sign that anything was done wrong. If you wrote this, you can ask for a person to review it.",
+  "marker_score": 0.0,
+  "model_score": 0.8209,
   "status": "decided",
-  "style_score": null
+  "style_score": 0.8756
 }
 ```
 
-Log entry (`GET /log?limit=1`):
+The other two labels, same request shape:
+
+| Input | creator_id | confidence | guess |
+|---|---|---|---|
+| clearly AI | `writer_ai` | 0.8792 | `ai` |
+| clearly human | `writer_02` | 0.2376 | `human` |
+
+**An appeal**
+
+```bash
+$ curl -X POST http://127.0.0.1:5000/appeal \
+  -H "Content-Type: application/json" \
+  -d '{"content_id": "e5d26436-c25a-4af6-bb05-6c957c85062b", "reasoning": "I wrote this myself about my Saturday. English is my second language, so I keep my sentences short."}'
+```
 
 ```json
 {
-  "combined_score": null,
-  "content_id": "a522fc16-f200-4346-a294-d435bf25ee3c",
-  "creator_id": "writer_01",
-  "guess": null,
-  "label": "PLACEHOLDER \u2014 scoring not built yet",
-  "model_score": 0.8515,
-  "status": "decided",
-  "style_score": null,
-  "timestamp": "2026-10-29T01:56:07+00:00"
+  "content_id": "e5d26436-c25a-4af6-bb05-6c957c85062b",
+  "message": "Thanks — your appeal is recorded. A person will review this piece, and it shows as under review until then.",
+  "status": "under_review"
+}
+```
+
+**What the log shows afterwards** — the original decision untouched, the
+appeal appended after it:
+
+```bash
+$ curl "http://127.0.0.1:5000/log?limit=2"
+```
+
+```json
+{
+  "count": 2,
+  "entries": [
+    {
+      "combined_score": 0.6293,
+      "content_id": "e5d26436-c25a-4af6-bb05-6c957c85062b",
+      "creator_id": "writer_03",
+      "guess": "unsure",
+      "label": "We couldn't tell whether this piece was written by a person or by an AI tool. Many people's own writing gets this result, so it is not a sign that anything was done wrong. If you wrote this, you can ask for a person to review it.",
+      "marker_score": 0.0,
+      "model_score": 0.8209,
+      "status": "decided",
+      "style_score": 0.8756,
+      "timestamp": "2026-10-29T02:09:48+00:00"
+    },
+    {
+      "content_id": "e5d26436-c25a-4af6-bb05-6c957c85062b",
+      "creator_id": "writer_03",
+      "event": "appeal",
+      "reasoning": "I wrote this myself about my Saturday. English is my second language, so I keep my sentences short.",
+      "status": "under_review",
+      "timestamp": "2026-10-29T02:09:48+00:00"
+    }
+  ]
+}
+```
+
+**`GET /content/<id>` (stretch)** — the item's current status:
+
+```bash
+$ curl http://127.0.0.1:5000/content/e5d26436-c25a-4af6-bb05-6c957c85062b
+```
+
+```json
+{
+  "appeals": [
+    {
+      "reasoning": "I wrote this myself about my Saturday. English is my second language, so I keep my sentences short.",
+      "timestamp": "2026-10-29T02:09:48+00:00"
+    }
+  ],
+  "confidence": 0.6293,
+  "content_id": "e5d26436-c25a-4af6-bb05-6c957c85062b",
+  "creator_id": "writer_03",
+  "guess": "unsure",
+  "label": "We couldn't tell whether this piece was written by a person or by an AI tool. Many people's own writing gets this result, so it is not a sign that anything was done wrong. If you wrote this, you can ask for a person to review it.",
+  "marker_score": 0.0,
+  "model_score": 0.8209,
+  "status": "under_review",
+  "style_score": 0.8756,
+  "submitted_at": "2026-10-29T02:09:48+00:00"
 }
 ```
 
@@ -333,28 +394,6 @@ and logs:
 
 ```json
 {"creator_id": "x", "event": "rejected", "http_status": 422, "reason": "too_short", "status": "rejected", "timestamp": "2026-10-29T01:56:07+00:00"}
-```
-
-**An appeal**
-
-```bash
-$ curl -X POST http://127.0.0.1:5000/appeal \
-  -H "Content-Type: application/json" \
-  -d '{"content_id": "...", "reasoning": "..."}'
-```
-
-```json
-
-```
-
-**What the log shows afterwards**
-
-```bash
-$ curl "http://127.0.0.1:5000/log?limit=3"
-```
-
-```json
-
 ```
 
 ---

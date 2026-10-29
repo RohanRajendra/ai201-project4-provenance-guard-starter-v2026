@@ -18,8 +18,9 @@ doesn't, it's the service itself.
 Routes:
 
     POST /ping        the worked example. Already works. Don't edit it
-    POST /submit      ← YOU BUILD THIS (Milestone 3, 4, 5)
-    POST /appeal      ← YOU BUILD THIS (Milestone 5)
+    POST /submit      judge a piece of text
+    POST /appeal      a writer contests a decision
+    GET  /content/<id> one item's current status (stretch)
     GET  /log         the audit log. Already works
     GET  /health      is the service up, and is the model loaded
 """
@@ -214,31 +215,62 @@ def _reject(creator_id: str, code: int, error: str, message: str):
 @app.post("/appeal")
 def appeal():
     """
-    A writer says you got it wrong. ← TODO — Milestone 5
+    A writer says you got it wrong. Expects JSON {"content_id", "reasoning"}.
 
-    Expects JSON:
-        {"content_id": "...", "reasoning": "..."}
-
-    Should:
-      1. Check the content_id actually exists — `audit.entries_for(id)` tells
-         you. A typo here fails silently and looks like a broken endpoint,
-         which is the single most common way this milestone eats an hour.
-      2. Record the appeal with `audit.log_appeal(...)`, which moves the item
-         to `under_review`.
-      3. Confirm to the writer. No automatic re-checking needed.
-
-    This is the smallest endpoint in the project and the one that matters most
-    to the person on the other end. It's the only thing standing between a
-    wrong accusation and nothing at all.
+    Appends the appeal beside the original decision (the log is append-only,
+    so the decision is never overwritten) and moves the item to under_review.
+    A bad request writes nothing — there's no decision for it to sit beside.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid_input", "message": "Send a JSON object with content_id and reasoning."}), 400
 
-    # TODO: delete this and build the route.
+    content_id, reasoning = payload.get("content_id"), payload.get("reasoning")
+    if not isinstance(content_id, str) or not content_id.strip():
+        return jsonify({"error": "invalid_input", "message": "content_id must be a non-empty string."}), 400
+    if not isinstance(reasoning, str) or not reasoning.strip():
+        return jsonify({"error": "invalid_input", "message": "reasoning must be a non-empty string."}), 400
+
+    decision = _decision_for(content_id)
+    if decision is None:
+        return jsonify({"error": "not_found", "message": f"No submission with content_id {content_id}."}), 404
+
+    audit.log_appeal(content_id=content_id, creator_id=decision["creator_id"], reasoning=reasoning)
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /appeal isn't built yet — see the TODO in app.py.",
-        "you_sent": payload,
-    }), 501
+        "content_id": content_id,
+        "status": "under_review",
+        "message": "Thanks — your appeal is recorded. A person will review this "
+                   "piece, and it shows as under review until then.",
+    })
+
+
+@app.get("/content/<content_id>")
+def content(content_id):
+    """One item's current status, rebuilt from the audit log. (Stretch.)"""
+    decision = _decision_for(content_id)
+    if decision is None:
+        return jsonify({"error": "not_found", "message": f"No submission with content_id {content_id}."}), 404
+
+    entries = audit.entries_for(content_id)
+    appeals = [e for e in entries if e.get("event") == "appeal"]
+    return jsonify({
+        "content_id": content_id,
+        "creator_id": decision["creator_id"],
+        "status": entries[-1]["status"],
+        "guess": decision["guess"],
+        "confidence": decision["combined_score"],
+        "label": decision["label"],
+        "model_score": decision["model_score"],
+        "style_score": decision["style_score"],
+        "marker_score": decision.get("marker_score"),
+        "submitted_at": decision["timestamp"],
+        "appeals": [{"timestamp": e["timestamp"], "reasoning": e["reasoning"]} for e in appeals],
+    })
+
+
+def _decision_for(content_id: str) -> dict | None:
+    """The original decision entry for an id, or None if there isn't one."""
+    return next((e for e in audit.entries_for(content_id) if e.get("status") == "decided"), None)
 
 
 # ── Already works ─────────────────────────────────────────────────────────────
