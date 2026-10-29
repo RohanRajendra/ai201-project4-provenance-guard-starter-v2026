@@ -156,8 +156,16 @@ reads as human.
 ### Signal two — the style signal
 
 **What it measures:** The shape of the text with no idea what it says
-(`stylometry.py::style_signal`): how much sentence lengths vary, how varied the
-vocabulary is, and how varied the punctuation is.
+(`stylometry.py::style_signal`), from three measures, each mapped to 0–1
+AI-likeness between two anchors:
+
+| Measure | Raw value | Human anchor → 0 | AI anchor → 1 | Weight |
+|---|---|---|---|---|
+| `sentence_length_spread` | stdev / mean of sentence lengths | 0.65 | 0.25 | 0.4 |
+| `type_token_ratio` | unique words / total, averaged over 50-word windows | 0.86 | 0.72 | 0.2 |
+| `punctuation_density` | `; : ! ? ( ) — – … "` per 100 words | 4.0 | 0.0 | 0.4 |
+
+Under 3 sentences the spread measure is replaced by a neutral 0.5.
 
 **Why that might differ between human and AI writing:** Generated prose
 marches in even, mid-length sentences with a safe vocabulary and mostly commas
@@ -167,7 +175,13 @@ forty-word one, a dash, a semicolon.
 **What it can't see:** Meaning. Anything that changes the shape without
 changing the substance moves it — splitting or merging sentences, adding
 dashes, pasting in a quotation. Very short texts give it almost nothing to
-measure.
+measure. And plain writing with no semicolons or dashes maxes out the
+punctuation measure — the same writers signal one already misreads.
+
+**A finding from calibration:** type-token ratio ran *backwards* on my short
+inputs — the stock AI paragraph had the most varied vocabulary (0.92) of all
+five, because generated prose avoids repeating words. That's why it carries
+half the weight of the other two.
 
 ### Signal three — the marker signal (stretch)
 
@@ -188,9 +202,41 @@ connectives gets marked up.
 <!-- Write the rule in words, then give the numbers. What happens when the two
      signals disagree? -->
 
-**The rule:**
+**The rule:** A weighted average of the three signals, then an agreement
+check. If *any* signal is below 0.60, the score is capped at 0.84 — one point
+under the AI band — so the item can land in unsure but never in AI. Two methods
+disagreeing is uncertainty, and uncertainty should never accuse anyone.
 
-**The numbers:**
+**The numbers:** (`config.py`)
+
+| Setting | Value |
+|---|---|
+| `WEIGHT_MODEL_SIGNAL` | 0.50 |
+| `WEIGHT_STYLE_SIGNAL` | 0.25 |
+| `WEIGHT_MARKER_SIGNAL` | 0.25 |
+| `AGREEMENT_FLOOR` | 0.60 (cap at `AI_THRESHOLD − 0.01` = 0.84 below it) |
+| `HUMAN_THRESHOLD` | 0.40 |
+| `AI_THRESHOLD` | 0.85 |
+
+**How the three are weighted against each other (stretch note):** The model
+signal gets half because it's the only one that reads the words; the style and
+marker signals split the other half because each is trivially cheap to fool on
+its own — reshape sentences, or paraphrase out the stock phrases. Weighting
+alone isn't what protects writers, though: the agreement floor is. With it, the
+cheapest signal to fool can veto an AI label but can never create one.
+
+**Calibration run** (through `POST /submit`):
+
+| Input | model | style | marker | confidence | guess |
+|---|---|---|---|---|---|
+| clearly AI (generated, stock phrases) | 0.868 | 0.782 | 1.000 | 0.879 | ai |
+| clearly human (casual, personal) | 0.473 | 0.005 | 0.000 | 0.238 | human |
+| plain human (short, common words) | 0.821 | 0.876 | 0.000 | 0.629 | unsure |
+| formal human (Gettysburg Address, 1863) | 0.727 | 0.758 | 0.000 | 0.553 | unsure |
+| lightly-edited AI (markers removed) | 0.687 | 0.642 | 0.000 | 0.504 | unsure |
+
+The casual and plain "human" inputs are stand-ins written for calibration; the
+student's own writing replaces them in unit 8's criteria runs.
 
 **Where it lives:** `scoring.py::combine_signals`
 
@@ -199,6 +245,13 @@ connectives gets marked up.
 
 **A case where my two signals split, and what my rule does with it:**
 
+The plain human paragraph. Signal one (0.82) and signal two (0.88) both read
+it as AI — short common words, even sentences, no expressive punctuation. The
+marker signal finds nothing (0.00). The weighted average is 0.63, and because
+the marker signal is under the 0.60 floor the cap applies anyway: it lands in
+**unsure**, not AI. That's exactly the writer from *Tracing the false
+positive*. With only the first two signals averaged it would have scored
+0.849 — a hair under the AI line, held there by luck rather than by a rule.
 
 
 ---

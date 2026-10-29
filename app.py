@@ -31,6 +31,8 @@ from flask import Flask, jsonify, request
 import audit
 import config
 import detector
+import markers
+import scoring
 import stylometry
 
 app = Flask(__name__)
@@ -180,24 +182,27 @@ def submit():
 
     content_id = str(uuid.uuid4())
     model_score = detector.model_signal(text)
+    style_score = stylometry.style_signal(text)
+    marker_score = markers.marker_signal(text)
+    confidence = scoring.combine_signals(model_score, style_score, marker_score)
+    guess, label = scoring.score_to_label(confidence)
 
-    # Milestone 3: one signal only. Confidence and label are placeholders.
-    result = {
+    audit.log_decision(
+        content_id=content_id, creator_id=creator_id, guess=guess,
+        model_score=model_score, style_score=style_score,
+        combined_score=confidence, label=label, marker_score=marker_score,
+    )
+    return jsonify({
         "content_id": content_id,
         "creator_id": creator_id,
-        "guess": None,
-        "confidence": None,
-        "label": "PLACEHOLDER — scoring not built yet",
+        "guess": guess,
+        "confidence": confidence,
+        "label": label,
         "model_score": model_score,
-        "style_score": None,
+        "style_score": style_score,
+        "marker_score": marker_score,
         "status": "decided",
-    }
-    audit.log_decision(
-        content_id=content_id, creator_id=creator_id, guess=result["guess"],
-        model_score=model_score, combined_score=result["confidence"],
-        label=result["label"],
-    )
-    return jsonify(result)
+    })
 
 
 def _reject(creator_id: str, code: int, error: str, message: str):
