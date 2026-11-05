@@ -49,6 +49,13 @@
    > *As built:* "reads as human" means **not labeled AI** — human or unsure
    > both pass. Why is under *Verified-human path*.
 
+**Unit 8 stretch (declared before building):**
+
+4. **Per-creator rate limits** — `/submit` limits are counted per `creator_id`
+   (`app.py::rate_limit_key`), falling back to the caller's address only when
+   a request has no usable `creator_id`. What that changes is under
+   *Rate Limiting*.
+
 ---
 
 ## What This Does
@@ -533,24 +540,53 @@ I didn’t drop the measure or flip its direction to fit five samples. I cut its
 
 ## Rate Limiting
 
-**My limits:** ___ per minute, ___ per day
+**My limits:** 5 per minute, 50 per day — per `creator_id`
+(`config.py::RATE_LIMIT_PER_MINUTE`, `RATE_LIMIT_PER_DAY`; decorator on
+`app.py::submit`).
 
 **Why those numbers and not others:**
-<!-- Think about two people: a real writer submitting their own work a few
-     times an hour, and a script sending a thousand variations to map your
-     thresholds. Your numbers have to be liveable for the first and hostile to
-     the second. -->
 
-**What a caller counts as:** <!-- per address, or per creator_id? They fail
-differently — one script can look like a thousand callers, and one household
-can look like one. -->
+- **5 a minute.** A writer pastes a piece, reads the label, maybe fixes a typo
+  and resubmits. Even a fast revise-and-check loop is one submission every
+  minute or two. Five in sixty seconds is already more than a person can read
+  labels and edit between. A script, though, can send five a second, so a
+  burst limit like this one is what it runs into first. I went lower than 10
+  because nothing a person does needs 10 a minute, and lower than 3 because a
+  writer trying three short pieces back to back shouldn't get a `429`.
+- **50 a day.** A prolific writer posting ten pieces, each checked a few times,
+  stays under it. A script mapping my thresholds needs hundreds of near-copies
+  to find where 0.40 and 0.85 sit. At 50 a day, 1,000 probes take one creator
+  20 days. The cap doesn't make probing impossible. It makes it slow and
+  visible in the log.
+
+**What a caller counts as:** a `creator_id` (stretch 4). The key function uses
+the `creator_id` in the body, and the address only when there isn't one.
+
+- **What it catches that per-address misses:** one account sending from many
+  addresses (phones, VPN hops, a botnet) still shares one bucket. It also
+  stops a household, classroom or campus behind one NAT address from throttling
+  every writer in it because one person is busy.
+- **What it costs:** `creator_id` is a string the caller chooses, and nothing
+  authenticates it. A script that rotates IDs (`attacker_1`, `attacker_2`, …)
+  gets a fresh 5/minute for each one. The attack set does exactly this — every
+  row in `attacks.csv` arrives under its own `creator_id` and none trips the
+  limit. A real deployment would need an address-level ceiling on top, or
+  creator IDs the site issues after login.
 
 **The run of status codes when I pushed past it:**
 
-<!-- python run_attacks.py --flood 15 -->
+`python run_attacks.py --flood 15` (15 submissions as `flood_tester`,
+`results/flood_2026-11-04_2016.md`):
 
 ```
+200 200 200 200 200 429 429 429 429 429 429 429 429 429 429
+```
 
+Each `429` leaves a trace in the log (`app.py::rate_limited` →
+`audit.log_rejection`):
+
+```json
+{"creator_id": "flood_tester", "event": "rejected", "http_status": 429, "limit": "5 per 1 minute", "reason": "rate_limited", "status": "rejected", "timestamp": "2026-11-05T01:16:44+00:00"}
 ```
 
 ---
