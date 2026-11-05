@@ -55,6 +55,11 @@
    (`app.py::rate_limit_key`), falling back to the caller's address only when
    a request has no usable `creator_id`. What that changes is under
    *Rate Limiting*.
+   > *To be clear about what I built:* the per-creator key function shipped
+   > with the starter. My Milestone 1 choice was to keep it rather than switch
+   > to per-address limits, to set the numbers for a per-creator bucket, and
+   > to write up what it catches and what it costs. I declared this in the same
+   > commit that switched limiting on.
 5. **A second measured improvement**, made after the first and measured the
    same way, with its own attack run and a third run log. Planned: strip
    injected instruction lines (`SYSTEM:` headers, "ignore previous
@@ -541,6 +546,39 @@ I didn’t drop the measure or flip its direction to fit five samples. I cut its
 - *What I asked for:* An agent to draft the three label texts, then reread each one as the writer receiving it. I focused on “unsure”, the label most honest writers will see.
 - *What came back:* The first unsure draft said the result was “common for clear, simple writing.” Read as the writer, it landed as an insult (“They’re calling my writing simple. That stings.”), and it gave the writer nothing they could do.
 - *What I changed:* I removed every description of the writing (“simple”, “plain”). The label now puts the uncertainty on the service (“We couldn’t tell…”), says this result is common for people’s own writing, and ends with the same review step as the AI label. The same pass added “Nothing has been taken down” to the AI label and changed “several signs” to “strong signs” to match how confident that band is.
+
+**Moment 3 (unit 8)**
+
+- *What I asked for:* An agent to mark all 56 attacks held or broke, with a
+  reason for each and the stage and mechanism behind every break.
+- *What came back:* A full set of marks and a rule where *unsure* counts as
+  held, because it accuses no one and vouches for no one. It also found a
+  pattern I hadn't seen: every one of the 8 AI → human breaks had a marker
+  score of 0. Several reasons said the false-positive texts were "saved by
+  the cap".
+- *What I changed:* I spot-checked its key claims against the code and the
+  log, and the pattern held up. It became the diagnosis behind both
+  improvements. The "saved by the cap" reasons got past my spot-check and into
+  the README. A second agent, verifying the verdicts, caught them: no human text
+  had scored above 0.84, so the cap never fired. I rewrote each one with what
+  actually kept them in unsure, which was having no stock phrases. I also
+  removed figures that came only from the agent's offline experiments, so the
+  README cites only what's recorded in `results/` and the log.
+
+**Moment 4 (unit 8)**
+
+- *What I asked for:* Before touching `scoring.py`, replay the candidate rule
+  (a floor of 0.40 whenever any signal is ≥ the agreement floor) on every
+  score already in the audit log, at two floor values.
+- *What came back:* At 0.60, the floor I set in unit 7, it fixed EV01, EV03 and
+  PI05 and changed none of my criteria inputs. At 0.55 it fixed five attacks,
+  but took the human label from two of my own paragraphs and dropped
+  criterion 3's human count to 1/3.
+- *What I changed:* I chose 0.60. That meant reusing an existing setting
+  instead of tuning a new one to the attack set, and accepting fewer fixes to
+  avoid labeling my own writing unsure. The re-run matched the prediction
+  exactly: the same three flips, and every criterion score unchanged. I wrote
+  the 0.55 trade up in *What's Still Broken* rather than taking it.
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
@@ -1115,11 +1153,13 @@ more predictable than formal 19th-century prose.
   at 0.8 and marker at 1.0, reaching 0.85 needs model ≥ 0.80, and gpt2 gave
   these 0.69, 0.77 and 0.82.
 - **Unsure: signal one, the marker signal, then the combining rule.** Two of
-  the three half-mine, half-AI blends came back human (0.304, 0.301). gpt2
-  scored them *lower* than either of my source paragraphs alone (model 0.33
-  and 0.37, against 0.46 each for #5 and #3 in criterion 1). The abrupt switch
-  of voice at the join is itself unpredictable text, which is likely the cause
-  (untested: I didn't score the AI halves alone).
+  the three half-mine, half-AI blends came back human (0.304, 0.301). Scored
+  alone (`results/blend_halves_signals.md`), the *AI* halves are what pull
+  signal one down: model 0.24 and 0.27, against 0.46 and 0.50 for my halves.
+  The length-matched Sonnet paragraphs are less predictable to gpt2 than my
+  own writing, and the blends land in between (0.33, 0.37). I'd guessed the
+  join itself was the cause, and measuring the halves showed that was
+  wrong.
   The AI halves are modern Sonnet prose with no stock phrases, so marker = 0,
   and 0.5·0.33 + 0.25·0.56 = 0.30 is under 0.40. The human band is just
   "under 0.40", so a text whose halves disagree gets a confident *human*
@@ -1150,8 +1190,11 @@ as RQ10/RQ11 in the attack run.
   0.30 + 0.02 + 0 = 0.31 → human.
 - **EV03** — *signal two.* The pasted quote adds `? : "` and short sentences,
   so style came out 0.23 while model stayed AI-like (0.67). 0.390, which is 0.01 under the line.
-- **EV05** — *signals one and two.* A full human rewrite lowered both (0.32 /
-  0.28). The wording really is human now. This is the method's honest limit,
+- **EV05** — *signals one and two.* A full human rewrite lowered both. Model
+  came out 0.32. On signal two, sentence-length spread is 0.675, past the 0.65
+  human anchor, so it scores 0. Type-token ratio is 0.859, at the 0.86 human
+  anchor, so it also scores about 0. Only punctuation (1.2 per 100 words → 0.70)
+  still reads AI, so style = 0.4·0 + 0.2·0 + 0.4·0.70 = 0.28. The wording really is human now. This is the method's honest limit,
   and fixing it means flagging human writers.
 - **PI01, PI02** — *signal one (PI02: and signal two).* gpt2 follows no
   instructions. It's a perplexity scorer, and the injected lines are just
@@ -1323,7 +1366,7 @@ so it fixed attacks and no criterion. Two costs:
   punctuation. PI01, PI02 and EV05 have no signal near 0.60, so this rule can't
   touch them.
 - **On the human side, it costs real writers the human label.** It didn't cost
-  any of mine on this run, but it came close. My #3 has style 0.596 and scored
+  any of mine on this run, but it came close. My #5 has style 0.596 and scored
   0.380 → human. At 0.600 it would now be unsure. Criterion 3's human input #1
   has model 0.581. Any honest writer whose plain style or common words push
   one signal to 0.60 can no longer be told *"This piece looks like it was
@@ -1343,7 +1386,10 @@ sentence that addresses the checker instead of a reader: "ignore previous
 instructions", `SYSTEM:` headers, "note to the reviewing system", "do not
 score", `key=value` pairs. It also removes HTML tags and JSON key/value
 fragments. `app.py::submit` calls it before the 20-word check and the signals,
-and logs `instructions_removed` (characters) with the decision. The response
+and logs `instructions_removed` (characters) with the decision. The build is
+a little wider than the declaration, which named only instruction lines. It
+also strips HTML tags and JSON fragments, because PI04 and PI05 inject
+through markup rather than sentences, and that's what changed their scores. The response
 doesn't change, so a caller isn't told what was caught. One change; the
 scoring, weights and thresholds are as they were after the first improvement.
 
@@ -1353,9 +1399,9 @@ unpredictable to gpt2 (signal one) or punctuation-heavy (signal two), so it
 dragged AI text to *human*. PI02 was the single worst outcome. Removing the
 injected text before scoring removes the lever.
 
-**Before I wired it in,** I ran it on every human text I have: all 16
-paragraphs in my samples file, the Gutenberg set, the blend sources and the false_positive
-family. It stripped nothing from any of them. The only non-attack text it
+**Before I wired it in,** I ran it on every human text I have
+(`results/sanitize_precheck.md`): all 16 paragraphs in my samples file, the
+Gutenberg set, the blend sources and the false_positive family. It stripped nothing from any of them. The only non-attack text it
 touched was the TF's `samples/injection.json`, whose last sentence is an
 injection.
 
@@ -1478,17 +1524,58 @@ injected text no longer moves the score at all. The worst outcome, PI02 at
 
 ## What's Still Broken
 
-<!-- For each attack still getting through and each criterion still missed:
-     what you'd do, and why you stopped. -->
+Measured against the final system, after both changes
+(`results/attack_run_2026-11-04_2242_after2.md`,
+`results/run_2026-11-04_2243_after2.md`).
 
+**Attacks still getting through (4 of 56)**
 
+| Attack | What still happens | What I'd do | Why I stopped |
+|---|---|---|---|
+| **EV02** — broken-up sentences | AI text → human 0.31. Model is 0.594, 0.006 under the agreement floor, so my first fix just misses it. | Score sentence-length spread on sentences of 3+ words, so a row of one-word "Really." fragments can't fake variety. | It's a change to signal two, and signals were frozen once the two improvements were chosen. Lowering the floor to 0.55 instead would also cost my #5 and criterion 3's human #1 their human labels (simulated). |
+| **EV05** — heavy human editing | AI text → human 0.23 after a full human rewrite. | Nothing in the detector. The words really are a person's now, and catching this means flagging human writers. A site that cares should ask for drafts or edit history. | It's the honest limit of reading only the final text. |
+| **RQ10, RQ11** — malformed body, no `creator_id` | `429` instead of `400`, because the shared address bucket was already full of other malformed rows. | Validate before limiting. Either check the body in a `before_request` hook and refuse it before Flask-Limiter counts it, or count only requests that pass validation (`deduct_when`). Keep a separate, looser address-level limit for junk. | It was the third candidate improvement. I took the two that protect writers from wrong labels over the one that fixes an error message. |
+
+**Fragile holds and gaps that the attack set didn't break, but could:**
+
+- **A reworded injection gets past `sanitize.py`** (`probe_rephrased_injection_after2.md`:
+  human 0.174). I'd stop pattern-matching instructions and handle all
+  non-prose structure the same way: score the text with and without its
+  most unusual sentence, and flag big swings for review. I stopped at the
+  pattern list because that's what the diagnosis supported, and the probe
+  shows exactly where it ends.
+- **EV06, EV07 and FP04 are each one phrase from flipping.** EV06 and EV07
+  were held only by the attacker's own marker phrases. FP04 is human text two
+  connectives from the AI band. All three come from the marker signal, which
+  current AI text barely triggers (criterion 2). I'd drop the marker weight to
+  near zero and keep it only as an agreement veto. That needs its own measured
+  run, and it moves the false-positive side, so it's the next improvement, not
+  a side change.
+- **MF07 (latent):** `stylometry.words` only counts ASCII, so any non-Latin
+  essay is refused as "too short" (probed: 102 Arabic words → 422). The fix is
+  a Unicode word pattern (`\w+`). I left it alone because it's a signal-code
+  change and no criterion covered it.
+- **`/verify` doesn't strip instructions,** and **`/appeal` accepts duplicates
+  and anyone's appeal** (`probes_tighter_targets_before.md`). Both are small
+  route changes I'd make before anything else if this shipped.
+
+**Criteria still missed**
+
+| Criterion | Final result | What I'd do | Why I stopped |
+|---|---|---|---|
+| 1 — my writing, human ≥ 6/10 | 4/10 (ai 0/10 held) | Give the human band its own evidence instead of "under 0.40". For example, let a clearly human style reading (spread and punctuation) pull a plain text down even when gpt2 finds it predictable. Then re-run on my plain paragraphs. | It means re-weighting signal two against signal one, and the first fix already pushes the other way. Doing both at once would make before and after impossible to compare. |
+| 2 — score gap ≥ 0.30 | 0.172 | Replace the marker list, which was built for older chat-model phrasing, with a signal that separates current AI text. Signal one only separates by 0.18, so the gap can't reach 0.30 without a better signal. | A new signal is a rebuild, not a fix. |
+| 3 — every label ≥ 2/3 | ai 1/3, unsure 1/3 | Fix `type_token_ratio` running backwards. It caps signal two at 0.80 on varied AI vocabulary, and that's why two stock AI essays stopped at 0.837 and 0.797. The blends would need a signal that notices a voice change mid-text. | Same reason as 1: signal changes, and each one needs its own measured run. |
+| 5 as written — bad input with `creator_id` "x" | 6/9, 1/9, 1/9 | The same validate-before-limiting fix as RQ10/RQ11. | Same as RQ10/RQ11. |
 
 **The trade I'd make if this ran for real:**
 
-<!-- Two sentences. Fewer wrong accusations means more AI text getting through.
-     Say which way you'd go and WHO PAYS FOR IT. -->
-
-
+I'd keep trading missed AI text for fewer wrong accusations: both my
+improvements push scores toward *unsure* and never toward *ai*, and I'd ship
+the AI band this narrow even though only 1 of 3 stock AI essays reaches it. The
+people who pay are the site and its honest readers, who get AI text labeled "we
+couldn't tell" when it could have been caught, and the plain writers, who
+almost never hear that their work looks like a person's.
 
 <!-- ═════════════════════════════════════════════════════════════════════
 
