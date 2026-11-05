@@ -25,6 +25,10 @@ def combine_signals(model_score: float, style_score: float, marker_score: float)
       2. Agreement: if ANY signal is under AGREEMENT_FLOOR (0.60), the result
          is capped at AI_THRESHOLD − 0.01, so the item can't be labeled AI.
          Disagreeing signals are uncertainty, and uncertainty never accuses.
+      3. The same rule on the human side (unit 8 improvement): if ANY signal
+         is at or above AGREEMENT_FLOOR, the result can't fall below
+         HUMAN_THRESHOLD, so the item can't be labeled human either.
+         Uncertainty doesn't vouch for anyone.
     """
     scores = (model_score, style_score, marker_score)
     score = (
@@ -34,6 +38,8 @@ def combine_signals(model_score: float, style_score: float, marker_score: float)
     )
     if min(scores) < config.AGREEMENT_FLOOR:
         score = min(score, config.AI_THRESHOLD - 0.01)
+    if max(scores) >= config.AGREEMENT_FLOOR:
+        score = max(score, config.HUMAN_THRESHOLD)
     return round(min(max(score, 0.0), 1.0), 4)
 
 

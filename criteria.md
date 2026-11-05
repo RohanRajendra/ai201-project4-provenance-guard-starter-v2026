@@ -195,6 +195,24 @@ show a writer a confident-looking label on nothing, and a 500 tells the calling
 site nothing it can act on. The boundary case stops "reject everything" from
 passing, because the 10,000-character cap is a promise the site relies on.
 
+> **Revised in unit 8:** Each of the 8 JSON bodies is sent with its own
+> `creator_id` instead of all sharing `"x"` (`eval_bad_N` in `run_eval.py`,
+> `chk_bad_t<trial>_N` in `run_checks.py`). The non-JSON body has no
+> `creator_id` and is unchanged. Everything else is unchanged: 9 of 9 return the listed code, 0
+> return 200 or 500, 9 new `rejected` entries each with a `reason`, 0 new
+> `decided` entries, and the 10,000-character text returns 200.
+>
+> **Why revised:** As written, it measures two stages at once. Unit 8 added a
+> 5-per-minute limit per `creator_id` that runs before the route and counts
+> refused requests. Under one shared `"x"`, every request from the 6th on is
+> answered by the limiter, so the criterion stops seeing the route's validation,
+> which is what "bad input is refused, logged, never scored" is about. The
+> revision isolates the route. Run as written, it scored 6/9, 1/9 and 1/9,
+> every miss a `429` (`results/checks_2026-11-04_2224_before_as_written.md`).
+> That combined result is a real miss: a writer who sends a few bad requests is
+> told "too many submissions" instead of what's wrong. It stays in the README
+> as MISSED, with its diagnosis under the rate limiter.
+
 ---
 
 <!-- ─────────────────────────────────────────────────────────────────────────
