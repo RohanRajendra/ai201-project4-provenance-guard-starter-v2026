@@ -37,6 +37,7 @@ import audit
 import config
 import detector
 import markers
+import sanitize
 import scoring
 import stylometry
 
@@ -183,6 +184,8 @@ def submit():
         return _reject(creator_id, 400, "invalid_input", "text must be a non-empty string.")
     if len(text) > config.MAX_TEXT_CHARS:
         return _reject(creator_id, 413, "too_long", f"text is over {config.MAX_TEXT_CHARS:,} characters.")
+    # Unit 8, second improvement: score what the writer wrote, not what it tells the checker.
+    text, removed = sanitize.strip_instructions(text)
     if len(stylometry.words(text)) < config.MIN_WORDS:
         return _reject(creator_id, 422, "too_short", f"text needs at least {config.MIN_WORDS} words to score.")
 
@@ -198,6 +201,7 @@ def submit():
         model_score=scores["model_score"], style_score=scores["style_score"],
         combined_score=scores["confidence"], label=label,
         marker_score=scores["marker_score"], verified_writer=verified,
+        instructions_removed=removed,
     )
     return jsonify({
         "content_id": content_id,
