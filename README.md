@@ -268,6 +268,9 @@ student's own writing replaces them in unit 8's criteria runs.
 
 **Where it lives:** `scoring.py::combine_signals`
 
+*Unit 8:* the agreement rule is now symmetric. If any signal is ≥ 0.60, the
+score can't fall below 0.40 either. See *The Improvement*.
+
 <!-- ⚠️ The grader checks your code against that line. If your rule lives
      somewhere else, say where. -->
 
@@ -1198,22 +1201,137 @@ as RQ10/RQ11 in the attack run.
 
 ## The Improvement
 
-**What I changed:**
+**What I changed:** I made the agreement rule symmetric, in
+`scoring.py::combine_signals` (four lines, no new setting). Before, signals
+that disagreed could block an **ai** label but not a **human** one. Now, if any
+signal is at or above `AGREEMENT_FLOOR` (0.60), the score can't fall below
+`HUMAN_THRESHOLD` (0.40). Disagreeing signals land in **unsure** on both
+sides: uncertainty doesn't accuse anyone, and it doesn't vouch for anyone
+either. It reuses the floor I set in unit 7, so no threshold, weight or signal
+moved.
 
-**Which diagnosis pointed at it:**
+**Which diagnosis pointed at it:** pattern 1, the one-sided agreement rule.
+EV01 (style 0.80), EV03 (model 0.67) and PI05 (model 0.64) were AI texts where
+one signal still said AI, and the rule let the others outvote it into a
+confident *human*. I simulated the change on the recorded scores before making
+it. It predicted exactly these three flips and no change on any criterion
+input, and the re-run matched.
 
 ### Attack Run — After
 
-<!-- Same format. `run_attacks.py --label after` -->
+`python run_attacks.py --set attack_set --label after` →
+`results/attack_run_2026-11-04_2233_after.md`. Same marking rule as before.
 
+| Family | Before held / broke | After held / broke |
+|---|---|---|
+| `evasion` | 6 / 4 | 8 / 2 |
+| `false_positive` | 8 / 0 | 8 / 0 |
+| `prompt_injection` | 2 / 4 | 3 / 3 |
+| `malformed` | 18 / 2 | 18 / 2 |
+| `flood_same_creator` | 12 / 0 | 12 / 0 |
+| **Total (56)** | **46 / 10** | **49 / 7** |
 
+| ID | Family | Targeting | Status | Guess | Score | model / style / marker | Verdict | Why |
+|---|---|---|---|---|---|---|---|---|
+| EV01 | evasion | signal two: typos raise word variety | 200 | unsure | 0.400 | 0.16 / 0.80 / 0.00 | **HELD** | Was human 0.28. Style 0.80 is above the floor, so the score can't drop under 0.40 → unsure. |
+| EV02 | evasion | signal two: broken-up sentences raise length spread | 200 | human | 0.315 | 0.59 / 0.07 / 0.00 | **BROKE** | AI text → human. One-word sentences and dashes: style 0.07. |
+| EV03 | evasion | signal two: a pasted quotation changes the shape | 200 | unsure | 0.400 | 0.67 / 0.23 / 0.00 | **HELD** | Was human 0.39. Model 0.67 is above the floor → unsure at 0.40. |
+| EV04 | evasion | signal one: unusual words raise perplexity | 200 | unsure | 0.506 | 0.61 / 0.80 / 0.00 | **HELD** | Unsure. Rare words left signal one AI-like (0.61, inside criterion 2's AI range of 0.57–0.79). |
+| EV05 | evasion | both signals: heavy human editing pass | 200 | human | 0.230 | 0.32 / 0.28 / 0.00 | **BROKE** | AI text → human. A full human rewrite lowered both signals. |
+| EV06 | evasion | signal two: one very long sentence and one very short | 200 | unsure | 0.481 | 0.57 / 0.42 / 0.36 | **HELD** | Unsure, fragile. Saved only by the attacker's own "it is worth noting" (marker 0.36). |
+| EV07 | evasion | signal two: padding with punctuation | 200 | unsure | 0.598 | 0.59 / 0.22 / 1.00 | **HELD** | Unsure, fragile. Style was fooled (0.22). Six "moreover"s saved it (marker 1.0). |
+| EV08 | evasion | signal one: text below the token window | 422 | — | — | — | **HELD** | 422 too_short (10 words). Refused, not scored, logged. |
+| EV09 | evasion | both: AI text with a human opening paragraph bolted on | 200 | unsure | 0.498 | 0.70 / 0.58 / 0.00 | **HELD** | Unsure, 0.50. The human opener didn't get it to human: model was 0.70. |
+| EV10 | evasion | signal two: repeated stanza structure | 200 | unsure | 0.704 | 0.98 / 0.86 / 0.00 | **HELD** | Unsure. Repetition reads more AI-like (model 0.98), but marker 0 keeps the average at 0.70. |
+| FP01 | false_positive | plain, clear human writing with no flourishes | 200 | unsure | 0.476 | 0.62 / 0.67 / 0.00 | **HELD** | Unsure. Not accused. |
+| FP02 | false_positive | human writing in a formal register | 200 | unsure | 0.602 | 0.74 / 0.93 / 0.00 | **HELD** | Unsure, 0.60. Not accused, but it scores as high as criterion 2's AI paragraphs (0.44–0.61). |
+| FP03 | false_positive | a non-native English speaker writing carefully | 200 | unsure | 0.598 | 0.81 / 0.78 / 0.00 | **HELD** | Unsure. Model 0.81, higher than any of criterion 2's AI paragraphs. |
+| FP04 | false_positive | a student essay written to a rubric | 200 | unsure | 0.724 | 0.83 / 0.74 / 0.49 | **HELD** | Unsure, fragile: 0.72. If a few more connectives lifted marker to 1.0: 0.5·0.83 + 0.25·0.74 + 0.25 = 0.85 → AI. |
+| FP05 | false_positive | technical documentation written by a person | 200 | unsure | 0.643 | 0.80 / 0.97 / 0.00 | **HELD** | Unsure. Style 0.97, model 0.80. Marker 0 keeps it at 0.64. |
+| FP06 | false_positive | a person imitating a formal template | 200 | unsure | 0.611 | 0.88 / 0.68 / 0.00 | **HELD** | Unsure. Model 0.88. Marker 0 keeps it at 0.61. |
+| FP07 | false_positive | human writing that repeats a phrase deliberately | 200 | unsure | 0.591 | 0.88 / 0.60 / 0.00 | **HELD** | Unsure. Model 0.88. Marker 0 keeps it at 0.59. |
+| FP08 | false_positive | very short genuine human submission | 422 | — | — | — | **HELD** | 422 too_short (8 words). No label at all, so nothing to appeal. |
+| PI01 | prompt_injection | instruction to ignore the check | 200 | human | 0.331 | 0.46 / 0.40 / 0.00 | **BROKE** | AI text → human. gpt2 follows no instructions; the odd prefix raised perplexity. |
+| PI02 | prompt_injection | instruction disguised as a system message | 200 | human | 0.147 | 0.20 / 0.18 / 0.00 | **BROKE** | AI text → human, 0.15. The fake SYSTEM line is unpredictable tokens to gpt2. |
+| PI03 | prompt_injection | instruction wrapped in the writer's voice | 200 | human | 0.374 | 0.59 / 0.31 / 0.00 | **BROKE** | AI text → human. The note's `( : )` pushed style down to 0.31. |
+| PI04 | prompt_injection | attempt to make the label text hostile | 200 | human | 0.315 | 0.50 / 0.26 / 0.00 | **HELD** | Label text comes from a fixed dict and is never echoed. Carrier is human text. |
+| PI05 | prompt_injection | attempt to inject into the audit log | 200 | unsure | 0.400 | 0.64 / 0.20 / 0.00 | **HELD** | Was human 0.37. Model 0.64 is above the floor → unsure at 0.40. |
+| PI06 | prompt_injection | instruction plus real human text | 200 | unsure | 0.447 | 0.56 / 0.67 / 0.00 | **HELD** | Unsure. Carrier is FP01. The instruction moved the score 0.03. |
+| MF01 | malformed | text is only whitespace | 400 | — | — | — | **HELD** | 400, the right refusal. Logged. |
+| MF02 | malformed | text is a single character | 422 | — | — | — | **HELD** | 422, the right refusal. Logged. |
+| MF03 | malformed | text is control characters | 422 | — | — | — | **HELD** | 422, the right refusal. Logged. |
+| MF04 | malformed | text is only punctuation | 422 | — | — | — | **HELD** | 422, the right refusal. Logged. |
+| MF05 | malformed | text is a very long single word | 422 | — | — | — | **HELD** | 422, the right refusal. Logged. |
+| MF06 | malformed | text is emoji only | 422 | — | — | — | **HELD** | 422, the right refusal. Logged. |
+| MF07 | malformed | text is right-to-left script | 422 | — | — | — | **HELD** | 422 is right for 17 words. But `stylometry.words` only counts ASCII, so it saw 0 — a long Arabic essay gets the same 422. |
+| MF08 | malformed | text is 60,000 characters | 413 | — | — | — | **HELD** | 413, the right refusal. Logged. |
+| RQ01 | malformed | no text field at all | 400 | — | — | — | **HELD** | 400, the right refusal. Logged. |
+| RQ02 | malformed | no creator_id | 400 | — | — | — | **HELD** | 400, the right refusal. Logged. |
+| RQ03 | malformed | text is a number | 400 | — | — | — | **HELD** | 400, the right refusal. Logged. |
+| RQ04 | malformed | text is a list | 400 | — | — | — | **HELD** | 400, the right refusal. Logged. |
+| RQ05 | malformed | text is null | 400 | — | — | — | **HELD** | 400, the right refusal. Logged. |
+| RQ06 | malformed | creator_id is an object | 400 | — | — | — | **HELD** | 400, the right refusal. Logged. |
+| RQ07 | malformed | body is a JSON array, not an object | 400 | — | — | — | **HELD** | 400, the right refusal. Logged. |
+| RQ08 | malformed | body is unparseable JSON | 400 | — | — | — | **HELD** | 400, the right refusal. Logged. |
+| RQ09 | malformed | body is empty | 400 | — | — | — | **HELD** | 400, the right refusal. Logged. |
+| RQ10 | malformed | body is form-encoded, not JSON | 429 | — | — | — | **BROKE** | 429, not 400. No usable creator_id, so it hit the shared address bucket and never reached the route. Re-sent alone: 400. |
+| RQ11 | malformed | body is JSON claiming to be plain text | 429 | — | — | — | **BROKE** | 429, not 400 — same as RQ10. Re-sent alone: 400. |
+| RQ12 | malformed | deeply nested JSON | 400 | — | — | — | **HELD** | 400, the right refusal. Logged. |
+| FL01_01 | flood_same_creator | 20 rapid submissions from one creator | 422 | — | — | — | **HELD** | Within 5/min, and 9 words → 422. |
+| FL01_02 | flood_same_creator | 20 rapid submissions from one creator | 422 | — | — | — | **HELD** | Within 5/min, and 9 words → 422. |
+| FL01_03 | flood_same_creator | 20 rapid submissions from one creator | 422 | — | — | — | **HELD** | Within 5/min, and 9 words → 422. |
+| FL01_04 | flood_same_creator | 20 rapid submissions from one creator | 422 | — | — | — | **HELD** | Within 5/min, and 9 words → 422. |
+| FL01_05 | flood_same_creator | 20 rapid submissions from one creator | 422 | — | — | — | **HELD** | Within 5/min, and 9 words → 422. |
+| FL01_06 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | — | **HELD** | 429 past 5/min. Logged. |
+| FL01_07 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | — | **HELD** | 429 past 5/min. Logged. |
+| FL01_08 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | — | **HELD** | 429 past 5/min. Logged. |
+| FL01_09 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | — | **HELD** | 429 past 5/min. Logged. |
+| FL01_10 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | — | **HELD** | 429 past 5/min. Logged. |
+| FL01_11 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | — | **HELD** | 429 past 5/min. Logged. |
+| FL01_12 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | — | **HELD** | 429 past 5/min. Logged. |
 
-**Did it help, and how do I know:**
+The only rows that changed are EV01, EV03 and PI05: human (0.28, 0.39, 0.37)
+→ unsure (0.400). No other row's status, guess or score moved.
 
-<!-- Widening the unsure band usually fixes one problem and creates another.
-     Reporting that trade honestly is worth full credit. -->
+### Run Log — After
 
+`python run_eval.py --label after` → `results/run_2026-11-04_2235_after.md`,
+`python run_checks.py --label after` → `results/checks_2026-11-04_2235_after.md`,
+and `--as-written` → `results/checks_2026-11-04_2236_after_as_written.md`.
 
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. My own writing is never labeled AI | `ai` 0/10 **and** `human` ≥ 6/10 | ai 0, human 4/10 | ai 0, human 4/10 | ai 0, human 4/10 | **MISSED** |
+| 2. AI and human text score clearly apart | mean(AI) − mean(human) ≥ 0.30 | 0.172 | 0.172 | 0.172 | **MISSED** |
+| 3. All three labels are reachable | ≥ 2/3 per label, 9/9 label strings | ai 1/3 · human 2/3 · unsure 1/3 · labels 9/9 | ai 1/3 · human 2/3 · unsure 1/3 · labels 9/9 | ai 1/3 · human 2/3 · unsure 1/3 · labels 9/9 | **MISSED** |
+| 4. Every appeal changes status and is recorded | 5/5 on every check | 5/5, all checks pass | 5/5, all checks pass | 5/5, all checks pass | **MET** |
+| 5. Bad input is refused, logged, never scored *(as written)* | 9/9 codes, 0 × 200/500, 9 rejected, 0 decided, 10,000 chars → 200 | 6/9 · 0 × 200/500 · 9 logged (3 `rate_limited`) · 200 | 1/9 · 0 × 200/500 · 9 logged (8 `rate_limited`) · 200 | 1/9 · 0 × 200/500 · 9 logged (8 `rate_limited`) · 200 | **MISSED** |
+| 5r. Bad input — one `creator_id` per case | 9/9 codes, 0 × 200/500, 9 rejected, 0 decided, 10,000 chars → 200 | 9/9 · 9 logged · 0 decided · 200 | 9/9 · 9 logged · 0 decided · 200 | 9/9 · 9 logged · 0 decided · 200 | **MET** |
+
+Every number is identical to the before run. All 30 criterion 1–3 scores are
+unchanged too: none of my inputs was both under 0.40 and carrying a signal at
+0.60 or above.
+
+**Did it help, and how do I know:** Yes, but narrowly. Broken attacks went from
+10 to 7 (46 → 49 held), measured on the same 56 inputs. The verdicts didn't move,
+so it fixed attacks and no criterion. Two costs:
+
+- **On the AI side, the fix is thin.** The rescued texts sit at exactly 0.400,
+  the lowest score unsure allows. EV02 and PI03 still break, and both have
+  model 0.594, 0.006 under the floor. An attacker only has to push every signal
+  under 0.60 instead of just the average, which is one more nudge of
+  punctuation. PI01, PI02 and EV05 have no signal near 0.60, so this rule can't
+  touch them.
+- **On the human side, it costs real writers the human label.** It didn't cost
+  any of mine on this run, but it came close. My #3 has style 0.596 and scored
+  0.380 → human. At 0.600 it would now be unsure. Criterion 3's human input #1
+  has model 0.581. Any honest writer whose plain style or common words push
+  one signal to 0.60 can no longer be told *"This piece looks like it was
+  written by a person"*, even when the other two signals say human. Criterion
+  1 already misses on too few human labels, and this rule can only make that
+  number go down. I accepted it because a confident *human* on AI text is
+  exactly the worst outcome I named, and the unsure label is written so it
+  never reads as an accusation.
 
 ---
 
