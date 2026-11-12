@@ -114,6 +114,8 @@ score, and a sentence the reader sees. The path:
 | `model_score`, `style_score`, `marker_score` | float 0–1 | each signal; higher = more AI-like |
 | `status` | `"decided"` | item status |
 | `verified_writer` | bool | creator holds the verified-human credential |
+| `text_modified` | bool | part of the text was removed as instructions before scoring *(added after unit 8 feedback)* |
+| `chars_removed` | int | how many characters were removed (0 if none) |
 
 Errors: `400 {"error": "invalid_input", "message": ...}` for a missing / empty /
 non-string field or a non-JSON body; `413 {"error": "too_long", ...}` above the
@@ -304,6 +306,9 @@ The text lives in `scoring.py::LABELS`; `scoring.py::score_to_label` picks one.
 For a creator who holds the verified-writer credential (stretch), one sentence
 is appended to whichever label applies: *"This writer has completed our live
 writing check."* The guess and range don't change.
+If `sanitize.py` removed part of the submission (*added after unit 8 feedback*),
+one more sentence is appended: *"Part of this submission wasn't scored because
+it read as instructions to our check rather than writing."*
 All three were reached in the Sample Run below (0.24 → human, 0.63 → unsure,
 0.88 → AI).
 
@@ -1367,7 +1372,7 @@ so it fixed attacks and no criterion. Two costs:
   touch them.
 - **On the human side, it costs real writers the human label.** It didn't cost
   any of mine on this run, but it came close. My #5 has style 0.596 and scored
-  0.380 → human. At 0.600 it would now be unsure. Criterion 3's human input #1
+  0.380 → human. At 0.600 it would now be unsure. My #4, one of criterion 3's human inputs,
   has model 0.581. Any honest writer whose plain style or common words push
   one signal to 0.60 can no longer be told *"This piece looks like it was
   written by a person"*, even when the other two signals say human. Criterion
@@ -1390,7 +1395,8 @@ and logs `instructions_removed` (characters) with the decision. The build is
 a little wider than the declaration, which named only instruction lines. It
 also strips HTML tags and JSON fragments, because PI04 and PI05 inject
 through markup rather than sentences, and that's what changed their scores. The response
-doesn't change, so a caller isn't told what was caught. One change; the
+doesn't change, so a caller isn't told what was caught. *(Reversed after
+feedback: see Post-feedback.)* One change; the
 scoring, weights and thresholds are as they were after the first improvement.
 
 **Which diagnosis pointed at it:** PI01, PI02, PI03 and PI05. Every one of them
@@ -1522,6 +1528,116 @@ injected text no longer moves the score at all. The worst outcome, PI02 at
 
 ---
 
+## Post-feedback: function-level tests, two fixes, visible stripping
+
+*Added after unit 8 was graded.* The feedback said every check went through
+`POST /submit`, so the pure functions could only be tested by starting Flask
+and loading the model, and the criterion 5 failure was really a
+test-isolation problem. This section closes those gaps.
+
+**Tests, with no server, model or rate limiter:**
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+33 tests, stdlib `unittest` (no new dependency), table-driven, run in under a
+second:
+
+| File | What it pins |
+|---|---|
+| `tests/test_stylometry.py` | `words`, `sentences`, the three measures, the anchors, `style_signal` |
+| `tests/test_markers.py` | `marker_hits` (case, commas, whole phrases), `marker_signal` saturation and dilution |
+| `tests/test_scoring.py` | `combine_signals` (average, cap, symmetric floor, disagreement → unsure) and every label boundary |
+| `tests/test_detector.py` | `squash` (perplexity → score), and `model_signal` with perplexity stubbed, so the model never loads |
+| `tests/test_sanitize.py` | each step of `strip_instructions` on its own, what's removed, what's kept, and the known cost (an essay that quotes an injection) |
+| `tests/test_validation.py` | every refusal code and the accepted cases, via `validation.parse_submission`, with no Flask and no limiter |
+| `tests/test_app.py` | `/submit` through Flask's test client, with the model stubbed, limiting off and the log in a temp folder: the new response fields, and 20 bad requests in a row that never hit `429` |
+
+**Red first, then green.** I wrote the tests against the intended behaviour,
+before any code change:
+
+- `results/tests_1_before_any_change.txt`: 5 FAILs and 22 ERRORs. The ERRORs
+  were functions that didn't exist yet. The FAILs were real bugs:
+  - `words("I don’t know.")` split *don’t* into two words.
+  - `words("A café, naïvely.")` dropped the accented letters.
+  - `words()` saw 0 words in Arabic.
+  - Curly quotes “ ” didn't count as punctuation.
+  - The marker rate on non-Latin text was wrong, because its word count was
+    wrong.
+- `results/tests_2_after_refactor.txt`, after the behaviour-preserving
+  refactors: only the 5 bugs, the non-Latin essay they cause, and the new
+  response fields were left red.
+- `results/tests_3_after_fixes.txt`: 33/33 OK. The starter's `test.py` still
+  passes.
+
+**What changed:**
+
+1. **Refactors** (no behaviour change, pinned by the tests above):
+   - `detector.squash` is split out of `model_signal`.
+   - `sanitize.strip_instructions` is now four named steps: `strip_markup` →
+     `drop_instruction_sentences` → `tidy_json_leftovers` (only after JSON was
+     found) → normalise.
+   - `/submit`'s checks moved into `validation.parse_submission`, which raises
+     `Refused`.
+2. **Fix: Unicode text.** `stylometry.words` now matches letters in any
+   script, and keeps straight or curly apostrophes inside a word
+   (`[^\W_]+(?:['’][^\W_]+)*`). Curly quotes count as expressive punctuation.
+3. **Decision: stripping is visible.** `/submit` now returns `text_modified`
+   and `chars_removed`, and `GET /content/<id>` returns `chars_removed`. The
+   label gets one more sentence when anything was removed. I'd hidden it to
+   avoid tipping off attackers, but the reworded-injection probe had already
+   shown rewording beats the filter anyway. A writer whose sentence was
+   dropped has a better claim to know than an attacker has to be kept guessing.
+
+### Fourth before / after: re-measured
+
+Before is the after2 system (`results/*_after2*`). After is
+`results/attack_run_2026-11-11_2148_after3.md`,
+`results/run_2026-11-11_2150_after3.md`,
+`results/checks_2026-11-11_2150_after3.md` and
+`results/checks_2026-11-11_2151_after3_as_written.md`.
+
+**Attack set:** 0 of 56 rows changed. Every status, guess and score is
+identical, and it's still 52 held / 4 broke. None of the attack inputs had
+curly quotes or accented words on the way to a verdict. MF07 (17 Arabic
+words) is still `422`, but now for the right reason: it really is under 20
+words.
+
+**Run log:**
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. My own writing is never labeled AI | `ai` 0/10 **and** `human` ≥ 6/10 | ai 0, human 4/10 | ai 0, human 4/10 | ai 0, human 4/10 | **MISSED** |
+| 2. AI and human text score clearly apart | mean(AI) − mean(human) ≥ 0.30 | 0.180 | 0.180 | 0.180 | **MISSED** |
+| 3. All three labels are reachable | ≥ 2/3 per label, 9/9 label strings | ai 1/3 · human 2/3 · unsure 1/3 · labels 9/9 | ai 1/3 · human 2/3 · unsure 1/3 · labels 9/9 | ai 1/3 · human 2/3 · unsure 1/3 · labels 9/9 | **MISSED** |
+| 4. Every appeal changes status and is recorded | 5/5 on every check | 5/5, all checks pass | 5/5, all checks pass | 5/5, all checks pass | **MET** |
+| 5. Bad input is refused, logged, never scored *(as written)* | 9/9 codes, 0 × 200/500, 9 rejected, 0 decided, 10,000 chars → 200 | 6/9 · 0 × 200/500 · 9 logged (3 `rate_limited`) · 200 | 1/9 · 0 × 200/500 · 9 logged (8 `rate_limited`) · 200 | 1/9 · 0 × 200/500 · 9 logged (8 `rate_limited`) · 200 | **MISSED** |
+| 5r. Bad input — one `creator_id` per case | 9/9 codes, 0 × 200/500, 9 rejected, 0 decided, 10,000 chars → 200 | 9/9 · 9 logged · 0 decided · 200 | 9/9 · 9 logged · 0 decided · 200 | 9/9 · 9 logged · 0 decided · 200 | **MET** |
+
+Four scores moved, and no guess. Two Gutenberg passages went 0.477 → 0.454
+and 0.440 → 0.424, my #4 (a criterion 3 human input) went 0.380 → 0.362, and the boundary
+text went 0.361 → 0.353. Their curly quotes and apostrophes now count. That
+moved criterion 2's gap from 0.172 to 0.180.
+
+**Probes** (`results/probes_after3.md`):
+
+- A 100-word Arabic essay → `200`, *unsure* 0.70.
+- The MF07 text ×6 (102 words), which got `422` before → `200`, *unsure* 0.75.
+- PI02 → *unsure* 0.477 with `"text_modified": true, "chars_removed": 122` in
+  the response.
+
+**Did it help, and what it cost:** The non-Latin fix removes a wrong refusal.
+A writer in another script is no longer told their 100-word essay is "too
+short". It's still not a fair judgment, though: gpt2 and my anchors were
+built on English, so their scores (0.70 and 0.75) mean little. At least they
+land in *unsure*, whose label says so, rather than in a confident band. The
+visibility change costs a little against attackers, since they now learn
+which phrasings get caught. The probe showed they could reword past the
+filter anyway.
+
+---
+
 ## What's Still Broken
 
 Measured against the final system, after both changes
@@ -1532,7 +1648,7 @@ Measured against the final system, after both changes
 
 | Attack | What still happens | What I'd do | Why I stopped |
 |---|---|---|---|
-| **EV02** — broken-up sentences | AI text → human 0.31. Model is 0.594, 0.006 under the agreement floor, so my first fix just misses it. | Score sentence-length spread on sentences of 3+ words, so a row of one-word "Really." fragments can't fake variety. | It's a change to signal two, and signals were frozen once the two improvements were chosen. Lowering the floor to 0.55 instead would also cost my #5 and criterion 3's human #1 their human labels (simulated). |
+| **EV02** — broken-up sentences | AI text → human 0.31. Model is 0.594, 0.006 under the agreement floor, so my first fix just misses it. | Score sentence-length spread on sentences of 3+ words, so a row of one-word "Really." fragments can't fake variety. | It's a change to signal two, and signals were frozen once the two improvements were chosen. Lowering the floor to 0.55 instead would also cost my #5 and my #4 (a criterion 3 human input) their human labels (simulated). |
 | **EV05** — heavy human editing | AI text → human 0.23 after a full human rewrite. | Nothing in the detector. The words really are a person's now, and catching this means flagging human writers. A site that cares should ask for drafts or edit history. | It's the honest limit of reading only the final text. |
 | **RQ10, RQ11** — malformed body, no `creator_id` | `429` instead of `400`, because the shared address bucket was already full of other malformed rows. | Validate before limiting. Either check the body in a `before_request` hook and refuse it before Flask-Limiter counts it, or count only requests that pass validation (`deduct_when`). Keep a separate, looser address-level limit for junk. | It was the third candidate improvement. I took the two that protect writers from wrong labels over the one that fixes an error message. |
 
@@ -1551,8 +1667,9 @@ Measured against the final system, after both changes
   near zero and keep it only as an agreement veto. That needs its own measured
   run, and it moves the false-positive side, so it's the next improvement, not
   a side change.
-- **MF07 (latent):** `stylometry.words` only counts ASCII, so any non-Latin
-  essay is refused as "too short" (probed: 102 Arabic words → 422). The fix is
+- **MF07 (latent; fixed after feedback, see Post-feedback):** `stylometry.words`
+  only counts ASCII, so any non-Latin essay is refused as "too short" (probed:
+  102 Arabic words → 422). The fix is
   a Unicode word pattern (`\w+`). I left it alone because it's a signal-code
   change and no criterion covered it.
 - **`/verify` doesn't strip instructions,** and **`/appeal` accepts duplicates

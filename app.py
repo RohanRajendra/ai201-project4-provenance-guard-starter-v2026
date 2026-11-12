@@ -37,9 +37,9 @@ import audit
 import config
 import detector
 import markers
-import sanitize
 import scoring
 import stylometry
+from validation import Refused, parse_submission
 
 app = Flask(__name__)
 
@@ -171,23 +171,10 @@ def submit():
     can't judge is refused with a 4xx and logged as a rejection — see the
     endpoint contract in README.md.
     """
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return _reject("unknown", 400, "invalid_input", "Send a JSON object with text and creator_id.")
-
-    creator_id = payload.get("creator_id")
-    if not isinstance(creator_id, str) or not creator_id.strip():
-        return _reject("unknown", 400, "invalid_input", "creator_id must be a non-empty string.")
-
-    text = payload.get("text")
-    if not isinstance(text, str) or not text.strip():
-        return _reject(creator_id, 400, "invalid_input", "text must be a non-empty string.")
-    if len(text) > config.MAX_TEXT_CHARS:
-        return _reject(creator_id, 413, "too_long", f"text is over {config.MAX_TEXT_CHARS:,} characters.")
-    # Unit 8, second improvement: score what the writer wrote, not what it tells the checker.
-    text, removed = sanitize.strip_instructions(text)
-    if len(stylometry.words(text)) < config.MIN_WORDS:
-        return _reject(creator_id, 422, "too_short", f"text needs at least {config.MIN_WORDS} words to score.")
+    try:
+        creator_id, text, removed = parse_submission(request.get_json(silent=True))
+    except Refused as refused:
+        return _reject(refused.creator_id, refused.code, refused.error, refused.message)
 
     content_id = str(uuid.uuid4())
     scores = _score(text)
@@ -195,6 +182,8 @@ def submit():
     verified = _is_verified(creator_id)
     if verified:
         label += " " + scoring.VERIFIED_NOTE
+    if removed:
+        label += " " + scoring.STRIPPED_NOTE
 
     audit.log_decision(
         content_id=content_id, creator_id=creator_id, guess=guess,
@@ -211,6 +200,8 @@ def submit():
         **scores,
         "status": "decided",
         "verified_writer": verified,
+        "text_modified": removed > 0,
+        "chars_removed": removed,
     })
 
 
@@ -285,6 +276,7 @@ def content(content_id):
         "style_score": decision["style_score"],
         "marker_score": decision.get("marker_score"),
         "verified_writer": decision.get("verified_writer", False),
+        "chars_removed": decision.get("instructions_removed", 0),
         "submitted_at": decision["timestamp"],
         "appeals": [{"timestamp": e["timestamp"], "reasoning": e["reasoning"]} for e in appeals],
     })

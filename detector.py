@@ -125,12 +125,15 @@ def model_signal(text: str) -> float:
     inputs in Milestone 4 and seen what your own text actually scores. If you
     do, say so in your README: it's a scoring decision, not a detail.
     """
-    ppl = perplexity(text)
+    return squash(perplexity(text))
 
-    midpoint = 45.0    # perplexity that scores 0.5
-    steepness = 1.6    # how sharply the score moves either side of it
 
-    # Logistic on log-perplexity. Low perplexity -> high AI score.
+def squash(ppl: float, midpoint: float = 45.0, steepness: float = 1.6) -> float:
+    """
+    Perplexity -> 0–1 AI-likeness. Logistic on log-perplexity: low perplexity
+    -> high score. `midpoint` is the perplexity that scores 0.5; `steepness` is
+    how sharply the score moves either side of it. Pure maths, no model.
+    """
     score = 1.0 / (1.0 + (ppl / midpoint) ** steepness)
     return round(min(max(score, 0.0), 1.0), 4)
 
