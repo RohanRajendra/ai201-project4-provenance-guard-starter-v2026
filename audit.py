@@ -28,8 +28,8 @@ import config
 _lock = threading.Lock()
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def _now(timespec: str = "seconds") -> str:
+    return datetime.now(timezone.utc).isoformat(timespec=timespec)
 
 
 def log_decision(
@@ -117,27 +117,41 @@ def log_event(event: str, creator_id: str, **fields) -> dict:
     return _append({"timestamp": _now(), "creator_id": creator_id, "event": event, **fields})
 
 
-def _append(entry: dict) -> dict:
-    config.LOG_DIR.mkdir(parents=True, exist_ok=True)
+def log_request(**fields) -> dict:
+    """
+    One record per HTTP request in logs/requests.jsonl (unit 9) — refused and
+    crashed requests included. The audit log says what was decided; this one
+    says what came in, what went out, and how long it took.
+    """
+    return _append({"timestamp": _now("milliseconds"), **fields}, config.REQUEST_LOG)
+
+
+def _append(entry: dict, path=None) -> dict:
+    path = path or config.AUDIT_LOG
+    path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(entry, ensure_ascii=False)
     with _lock:
-        with config.AUDIT_LOG.open("a", encoding="utf-8") as f:
+        # backslashreplace: a lone surrogate in the input is written as an escape
+        # instead of raising, which would lose the record.
+        with path.open("a", encoding="utf-8", errors="backslashreplace") as f:
             f.write(line + "\n")
     return entry
 
 
-def read_entries(limit: int | None = None) -> list[dict]:
+def read_entries(limit: int | None = None, path=None) -> list[dict]:
     """
-    Read the log back, oldest first. `limit` keeps the most recent N.
+    Read a log back, oldest first — the audit log unless `path` says otherwise.
+    `limit` keeps the most recent N.
 
     A malformed line is skipped rather than raising — a log that can't be read
     because of one bad row is worse than a log with a gap.
     """
-    if not config.AUDIT_LOG.exists():
+    path = path or config.AUDIT_LOG
+    if not path.exists():
         return []
 
     entries = []
-    for line in config.AUDIT_LOG.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
