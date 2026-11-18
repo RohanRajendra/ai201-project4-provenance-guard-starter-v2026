@@ -1792,6 +1792,141 @@ Out of scope, on purpose:
 4. **A second measured improvement,** drawn from the diagnosis, with a third
    run log in the same format.
 
+**Running It**
+
+Path B, local with logs. After a one-time setup, it's one command, and
+[RUNNING.md → The run path](RUNNING.md) has the whole thing:
+
+```bash
+gunicorn -c gunicorn.conf.py app:app
+```
+
+You need Python 3.11–3.13 (tested on 3.13.2), the exact pins in
+`requirements.lock.txt`, and gpt2 (a 548 MB model file, 525 MB in the cache),
+which `python detector.py` downloads once. Expect about 1.3 GB of memory once
+it's warm.
+
+*Tested from a clean clone:* a `git clone` of this repo into a new folder, a
+fresh venv, `pip install -r requirements.lock.txt` (44 s), then the start
+command. `/health` answered and RUNNING.md's `curl` got a `200`. It hit two
+things a reader would hit, both now in RUNNING.md. First, on macOS AirPlay
+holds port 5000, so `localhost:5000` can answer `403 AirTunes`; use
+`127.0.0.1`. Second, `python test.py` falsely warns that the model is missing
+when the Hugging Face cache has been moved. Two gaps, honestly: the clone
+shared this machine's model cache, so the 548 MB download wasn't re-tested;
+and `requirements.lock.txt` plus the new RUNNING.md section were copied into
+the clone, because they weren't committed yet. The session below ran from the
+same command on `PORT=5001`, since AirPlay holds 5000 on this Mac.
+
+**Instrumentation**
+
+Every HTTP request writes one JSON line to `logs/requests.jsonl`. The writer is
+`app.py::_log_request`, an `after_request` hook that calls
+`audit.py::log_request`. It's registered before the rate limiter, so 429s get a
+record too, and so do refusals, 404s and crashes, which
+`app.py::internal_error` and `app.py::detector_unavailable` turn into JSON
+`500` and `503` responses first. The response's `X-Request-Id` header carries
+the record's id, so a client can find its own line, and
+`GET /log?log=requests&limit=N` reads the log back over HTTP.
+
+| Field | What it holds |
+|---|---|
+| `timestamp` | UTC, to the millisecond |
+| `request_id` | 12 hex characters, also sent back as the `X-Request-Id` header |
+| `method`, `route` | The route as its template (`/content/<content_id>`), so records group |
+| `status` | The HTTP status the client got |
+| `duration_ms` | Wall time from the first `before_request` hook to `after_request` |
+| `cpu_ms` | Process CPU time over the same span. It counts all of torch's threads, so it can exceed `duration_ms`. It belongs to one request because the one sync worker serves one at a time |
+| `max_rss_mb` | The worker's peak resident memory so far |
+| `input` | What came in: `creator_id` / `content_id`, `chars`, `words`, the first 60 characters and a sha256 fingerprint, but never the whole text. Query args for a GET; `{"bytes", "json_object": false}` for a body that isn't a JSON object |
+| `output` | What went out: the response size, plus `guess`, `confidence`, `content_id`, `status` or `error` from small JSON bodies |
+| `stages_ms` | `/submit` and `/verify` only: time per stage (the latency breakdown) |
+| `error` | `{type, message}` for a 500 or 503, otherwise `null` |
+| `pid` | The worker process. It changes if gunicorn restarts the worker |
+
+Fourteen entries from one real session on 2026-11-18, copied from
+`logs/requests.jsonl`. Seven are failures: `400` refused, `422` too short,
+`413` too long, `500` crash, `429` rate limited, `404` unknown route, and `503`
+model unavailable. The `503` is from a second start with `HF_HUB_OFFLINE=1
+AI201_DETECTOR_MODEL=distilgpt2`, which means a model that was never
+downloaded and no network to fetch it.
+
+```json
+{"timestamp": "2026-11-18T16:09:24.954+00:00", "request_id": "0b273e2c8ff2", "method": "POST", "route": "/ping", "status": 200, "duration_ms": 0.25, "cpu_ms": 0.26, "max_rss_mb": 35.0, "input": {}, "output": {"bytes": 60, "ok": true}, "stages_ms": null, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:24.973+00:00", "request_id": "6fc99e2ca3c4", "method": "GET", "route": "/health", "status": 200, "duration_ms": 6.69, "cpu_ms": 6.7, "max_rss_mb": 35.0, "input": {}, "output": {"bytes": 100, "ok": true, "detector_loaded": false}, "stages_ms": null, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:30.660+00:00", "request_id": "ccfd76bb0236", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 5674.05, "cpu_ms": 3470.52, "max_rss_mb": 848.0, "input": {"creator_id": "session_writer", "chars": 170, "words": 32, "preview": "I walked to the market this morning because the bus was late", "sha256": "964596cbb966"}, "output": {"bytes": 502, "content_id": "e2d32694-f337-4e61-9ae4-8702d43527b0", "guess": "unsure", "confidence": 0.4, "status": "decided"}, "stages_ms": {"validate": 0.23, "model_load": 4408.97, "model": 1256.9, "style": 0.15, "markers": 0.04, "combine": 0.01, "verified_lookup": 6.82, "audit_write": 0.21}, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:31.035+00:00", "request_id": "ec3af1bf38ca", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 164.18, "cpu_ms": 270.73, "max_rss_mb": 967.1, "input": {"creator_id": "measure_cost_0", "chars": 1140, "words": 178, "preview": "The GuiController represents the class that acts as a contro", "sha256": "73dc0bb45c49"}, "output": {"bytes": 324, "content_id": "443f8847-07f8-4316-a6c1-34e7d700d461", "guess": "human", "confidence": 0.3277, "status": "decided"}, "stages_ms": {"validate": 0.46, "model_load": 0.0, "model": 154.5, "style": 0.7, "markers": 0.23, "combine": 0.0, "verified_lookup": 7.16, "audit_write": 0.47}, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:44.755+00:00", "request_id": "3f2ce5674aba", "method": "POST", "route": "/submit", "status": 400, "duration_ms": 0.79, "cpu_ms": 0.8, "max_rss_mb": 1255.6, "input": {"creator_id": "session_bad_1"}, "output": {"bytes": 71, "error": "invalid_input"}, "stages_ms": {"validate": 0.02}, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:44.783+00:00", "request_id": "956e5c0a3094", "method": "POST", "route": "/submit", "status": 422, "duration_ms": 0.58, "cpu_ms": 0.59, "max_rss_mb": 1255.6, "input": {"creator_id": "session_bad_2", "chars": 8, "words": 2, "preview": "Hi there", "sha256": "8328c36d18b7"}, "output": {"bytes": 73, "error": "too_short"}, "stages_ms": {"validate": 0.03}, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:44.833+00:00", "request_id": "78c25a9b6a4c", "method": "POST", "route": "/submit", "status": 413, "duration_ms": 0.62, "cpu_ms": 0.63, "max_rss_mb": 1255.6, "input": {"creator_id": "session_bad_3", "chars": 10001, "words": 1, "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sha256": "0cab99a05860"}, "output": {"bytes": 65, "error": "too_long"}, "stages_ms": {"validate": 0.01}, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:44.853+00:00", "request_id": "e7278ea1ff85", "method": "POST", "route": "/submit", "status": 500, "duration_ms": 6.22, "cpu_ms": 5.14, "max_rss_mb": 1255.6, "input": {"creator_id": "session_surrogate", "chars": 166, "words": 35, "preview": "I wrote this on my phone and something odd got pasted in the", "sha256": "ca29d14ec197"}, "output": {"bytes": 121, "error": "internal_error"}, "stages_ms": {"validate": 0.11, "model_load": 0.0, "model": 0.08}, "error": {"type": "TypeError", "message": "TextEncodeInput must be Union[TextInputSequence, Tuple[InputSequence, InputSequence]]"}, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:45.200+00:00", "request_id": "5db821ae1daf", "method": "POST", "route": "/submit", "status": 429, "duration_ms": 0.62, "cpu_ms": 0.63, "max_rss_mb": 1255.6, "input": {"creator_id": "session_flood", "chars": 170, "words": 32, "preview": "I walked to the market this morning because the bus was late", "sha256": "964596cbb966"}, "output": {"bytes": 103, "error": "rate_limited"}, "stages_ms": null, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:45.211+00:00", "request_id": "f3b299acca12", "method": "GET", "route": "/nope", "status": 404, "duration_ms": 0.17, "cpu_ms": 0.17, "max_rss_mb": 1255.6, "input": {}, "output": {"bytes": 207}, "stages_ms": null, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:11:08.801+00:00", "request_id": "c02767cfd06f", "method": "POST", "route": "/submit", "status": 503, "duration_ms": 3645.11, "cpu_ms": 2909.78, "max_rss_mb": 303.7, "input": {"creator_id": "session_nomodel", "chars": 170, "words": 32, "preview": "I walked to the market this morning because the bus was late", "sha256": "964596cbb966"}, "output": {"bytes": 134, "error": "detector_unavailable"}, "stages_ms": {"validate": 0.23, "model_load": 3644.2}, "error": {"type": "DetectorUnavailable", "message": "Couldn't load 'distilgpt2': We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'.\nThe first r"}, "pid": 52519}
+{"timestamp": "2026-11-18T16:11:22.088+00:00", "request_id": "5b1593e6284d", "method": "POST", "route": "/appeal", "status": 200, "duration_ms": 7.25, "cpu_ms": 7.25, "max_rss_mb": 1255.6, "input": {"content_id": "01e11fc8-188f-4f45-88b0-261f8e27ad02"}, "output": {"bytes": 203, "content_id": "01e11fc8-188f-4f45-88b0-261f8e27ad02", "status": "under_review"}, "stages_ms": null, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:11:22.115+00:00", "request_id": "08cf154c82a1", "method": "GET", "route": "/content/<content_id>", "status": 200, "duration_ms": 13.27, "cpu_ms": 13.28, "max_rss_mb": 1255.6, "input": {}, "output": {"bytes": 631, "content_id": "01e11fc8-188f-4f45-88b0-261f8e27ad02", "guess": "unsure", "confidence": 0.4, "status": "under_review"}, "stages_ms": null, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:11:22.129+00:00", "request_id": "b847bbbcc9c3", "method": "GET", "route": "/log", "status": 200, "duration_ms": 1.07, "cpu_ms": 1.07, "max_rss_mb": 1255.6, "input": {"log": "requests", "limit": "3"}, "output": {"bytes": 1413, "count": 3}, "stages_ms": null, "error": null, "pid": 51967}
+```
+
+What the failures show:
+
+- **The `500` is a real bug the old log couldn't have shown.** A text with a
+  lone surrogate (`\ud800`, which JSON allows) passes validation, then gpt2's
+  tokenizer rejects it with a `TypeError` in the `model` stage. Before this
+  unit, that was an HTML 500 page and no log line at all.
+- **The first `503` took 3.6 s**, all of it in `model_load`: torch and
+  transformers imported, and then the load failed. The second took 1.2 ms.
+  Nothing remembers the failure, so every request tries the load again.
+- **`/health` said `"ok": true` all through the `503` session.** That's the
+  same answer a healthy cold start gets, because it reports whether the model
+  *is* loaded, not whether it *can* be.
+
+**What It Costs**
+
+There's no API spend: the model runs on this machine, so a run costs compute
+and memory. I measured it with `python measure.py --n 10 --label cost`: ten
+`POST /submit`s, one at a time, of my own paragraphs (116–289 words), sent
+after a warm-up request. Each request's server-side numbers come from its own
+request-log record, matched by `X-Request-Id`. The raw output is in
+`results/measure_2026-11-18_1109_cost.md`.
+
+| Per run (warm) | Mean of 10 | Range |
+|---|---|---|
+| CPU time (`cpu_ms`) | **0.263 CPU-seconds** | 0.148–0.413 |
+| Server time (`duration_ms`) | 144.8 ms | 95.2–204.7 |
+| Client round trip | 147.8 ms | 97.3–207.5 |
+
+- **Once per process start**, the first `/submit` costs 5.67 s and 3.47
+  CPU-seconds (record `ccfd76bb0236` above). 4.41 s of that is loading gpt2,
+  and 1.26 s is the first forward pass.
+- **Memory:** peak RSS was 1,256 MB after the ten runs, against 848 MB just
+  after the cold start and 35 MB before the model loads. Memory, not CPU,
+  decides the host. This is over a 1 GB instance, not just the 512 MB free
+  tier.
+- **CPU time is 1.8× the wall time,** because torch spreads one forward pass
+  across several cores. So the per-run figure to quote is CPU-seconds, not
+  wall seconds.
+
+*Latency breakdown (stretch 1).* The mean of the same ten warm runs:
+
+| Stage | Mean ms | Share of 144.8 ms |
+|---|---|---|
+| `model`: gpt2 tokenise and forward pass | 135.89 | 93.9% |
+| `verified_lookup`: `_is_verified` reads the whole audit log | 6.68 | 4.6% |
+| `style` | 0.75 | 0.5% |
+| `validate`, including `sanitize` | 0.47 | 0.3% |
+| `markers` | 0.26 | 0.2% |
+| `audit_write` | 0.23 | 0.2% |
+| `model_load` (warm) | 0.00 | 0.0% |
+| `combine` | 0.00 | 0.0% |
+| Outside any stage (Flask, JSON) | 0.51 | 0.4% |
+
+The model dominates: it's 94% of a warm run and nearly all of a cold one. The
+only other stage worth a number is `verified_lookup`. To answer one yes/no
+question about one writer, it reads and parses the entire audit log on every
+submission (about 1,750 lines, 0.6 MB at the time), so its cost tracks the
+size of the log, not the size of the request.
+
 ---
 
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
