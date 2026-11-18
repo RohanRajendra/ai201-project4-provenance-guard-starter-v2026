@@ -22,3 +22,7 @@ Thumbs.db
 # Commit them.
 
 reqs/ 
+
+my_writing_samples.txt
+samples/
+.claude/
