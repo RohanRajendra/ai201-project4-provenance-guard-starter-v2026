@@ -72,17 +72,24 @@ def _start_clock():
 
 @app.after_request
 def _log_request(response):
+    record = dict(
+        request_id=g.request_id, method=request.method,
+        route=request.url_rule.rule if request.url_rule else request.path,
+        status=response.status_code,
+        duration_ms=_ms(time.perf_counter() - g.t0),
+        cpu_ms=_ms(time.process_time() - g.cpu0),
+        max_rss_mb=_max_rss_mb(), input=None, output=None,
+        stages_ms=g.stages or None, error=g.error, pid=os.getpid(),
+    )
+    # A summary that can't be built costs that field, not the record (C2 #26:
+    # re-parsing a 100,000-deep body raised RecursionError and lost the line).
+    for field, build in (("input", _input_summary), ("output", lambda: _output_summary(response))):
+        try:
+            record[field] = build()
+        except Exception as exc:  # noqa: BLE001
+            record[field] = {"log_error": repr(exc)[:200]}
     try:
-        audit.log_request(
-            request_id=g.request_id, method=request.method,
-            route=request.url_rule.rule if request.url_rule else request.path,
-            status=response.status_code,
-            duration_ms=_ms(time.perf_counter() - g.t0),
-            cpu_ms=_ms(time.process_time() - g.cpu0),
-            max_rss_mb=_max_rss_mb(),
-            input=_input_summary(), output=_output_summary(response),
-            stages_ms=g.stages or None, error=g.error, pid=os.getpid(),
-        )
+        audit.log_request(**record)
     except Exception as exc:  # noqa: BLE001 — a failed log write must not fail the response
         print(f"request log write failed: {exc!r}", file=sys.stderr)
     response.headers["X-Request-Id"] = g.request_id

@@ -129,6 +129,14 @@ class RequestLog(unittest.TestCase):
         self.assertEqual(record["error"], {"type": "RuntimeError", "message": "boom"})
         self.assertEqual(response.get_json()["request_id"], record["request_id"])
 
+    def test_a_body_too_deep_to_parse_still_gets_its_record(self):
+        with self.assertLogs(app.app.logger, "ERROR"):
+            response, record = self.send("post", "/submit", data="[" * 100_000 + "]" * 100_000,
+                                         content_type="application/json")
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(record["error"]["type"], "RecursionError")
+        self.assertIn("RecursionError", record["input"]["log_error"])
+
     def test_request_log_is_readable_over_http(self):
         self.client.post("/ping", json={})
         body = self.client.get("/log?log=requests&limit=1").get_json()
