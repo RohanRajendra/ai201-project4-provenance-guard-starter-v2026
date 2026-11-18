@@ -245,3 +245,202 @@ passing, because the 10,000-character cap is a promise the site relies on.
      A number you missed stays where it is, gets diagnosed, and gets a fix
      attempted. That's where the points are.
      ───────────────────────────────────────────────────────────────────────── -->
+
+---
+
+# Capstone criteria (unit 9)
+
+Five criteria for this unit's extension: the gunicorn run path, the request
+log, the error handlers, and the cost. They were written before any capstone
+results.
+
+**Rules for all five:** Each criterion gets 3 trials, and a target counts as
+met only if it holds in all 3. Every trial starts fresh (a new clone or a new
+server), and no code changes between trials. Times are measured at the client
+unless a criterion says `duration_ms`. Texts come from `scenarios.py`. The
+surrogate texts are `MY_WRITING[6]` with a lone `\ud800` at the start (S1) or
+in the middle (S2), or a `\udc00` at the end (S3). Each request uses its own
+`creator_id` unless a criterion means to trip the rate limit.
+
+---
+
+## C1. A fresh clone runs from RUNNING.md alone
+
+**Criterion:** In a new folder with empty pip and model caches, clone the repo
+and follow RUNNING.md → *The run path* exactly as written. No extra step is
+needed, and the `/submit` curl in RUNNING.md returns a result that the clone
+logged.
+
+**Target:** In each trial:
+- 0 extra steps.
+- The curl returns a `content_id` with `"status": "decided"`.
+- That `content_id` appears on exactly 1 line of the clone's
+  `logs/requests.jsonl`, with status 200.
+
+**How to test:**
+1. Make a new folder and point `HF_HOME`, `HF_HUB_CACHE` and `PIP_CACHE_DIR`
+   inside it, so everything downloads again.
+2. Record the terminal with `script`, clone the committed HEAD, and run the
+   steps.
+3. Count every command that RUNNING.md doesn't state, or that you had to edit.
+   Not counted: the clone path, a `python3.11`–`3.13` binary, `PORT=5001`
+   (RUNNING.md offers it), and re-running a command unchanged.
+4. Grep the clone's log for the `content_id`.
+
+**Why:**
+- **0 extra steps:** each extra step is where a stranger gets stuck.
+- **Empty caches:** Milestone 3's test shared this machine's model cache and
+  copied in uncommitted files, so the 548 MB download and the committed repo
+  were never tried.
+- **The log check:** it proves the clone answered, and not another copy
+  running on the same port.
+
+## C2. Every request leaves exactly one correct log record
+
+**Criterion:** Each of the 26 requests below gets exactly one new line in
+`logs/requests.jsonl`, found by its `X-Request-Id`. That line matches what the
+client sent and got back.
+
+**Target:** In each trial, 26 of 26 match. The log grows by exactly 26 lines,
+and the server prints `request log write failed` 0 times. A record matches
+when:
+- `status` is the status the client got.
+- `error` is filled in for a 500 or above, and `null` for anything else.
+- `timestamp` is within 1 s of the response.
+- `creator_id` and `content_id` are what was sent, and `sha256` matches the
+  text.
+- `output` carries the body's `content_id` (on a 200) or its `error` code.
+- `duration_ms` is no longer than the client's round trip, and at most 25 ms
+  shorter.
+
+**How to test:** Start a fresh `gunicorn -c gunicorn.conf.py app:app` and save
+its output. Send these requests in order, one at a time. Record each one's
+status, `X-Request-Id`, body, receive time and round trip.
+
+| # | Request | Expect |
+|---|---|---|
+| 1 | `POST /ping` | 200 |
+| 2 | `GET /health` | 200 |
+| 3–7 | `/submit` `MY_WRITING[0–4]`, all from one creator | 200 ×5 |
+| 8 | `/submit` `MY_WRITING[5]`, same creator | 429 |
+| 9–16 | `/submit`, the 8 `BAD_INPUT` bodies | 400 ×5, 413 ×2, 422 |
+| 17 | `/submit` with body `not json` | 400 |
+| 18 | `/submit` with body `[1, 2, 3]` | 400 |
+| 19 | `/submit` S1 | 500 |
+| 20 | `/appeal` on #4's id, with reasoning | 200 |
+| 21 | `/appeal` on #4's id, without reasoning | 400 |
+| 22 | `GET /content/<random id>` | 404 |
+| 23 | `GET /nope` | 404 |
+| 24 | `GET /submit` | 405 |
+| 25 | `GET /log?log=requests&limit=1` | 200 |
+| 26 | `/submit` with JSON nested 100,000 levels deep | not predicted |
+
+If #8 isn't a 429 or #19 isn't a 500, the setup is wrong. Keep that trial with
+the reason, and rerun.
+
+**Why:**
+- **Every request, not most:** the cost numbers, the latency breakdown and
+  every diagnosis are read from this log. A missing or wrong record breaks all
+  of them, and "a failure that shows up only as an absence is one you'll never
+  find."
+- **26 of 26:** these paths are deterministic, so one miss is a bug, not
+  noise.
+- **25 ms:** Milestone 3's gap between the client and the log was 2–9 ms. A
+  bigger gap is waiting the log doesn't show.
+- **#26:** a real hostile body. It stays in whatever it does.
+
+## C3. Failures return JSON, decide nothing, and the service recovers on its own
+
+**Criterion:** When the model files are missing, `/submit` returns a JSON 503
+and decides nothing. Once the files are back, the next `/submit` works without
+a restart. A text with a lone surrogate returns a JSON 500 with its
+`request_id`. Each failure's record names the error and the stage it stopped
+in. One worker serves the whole trial, and no failure is slower than a
+success.
+
+**Target:** In each trial:
+- **Missing model:** 5 of 5 return 503 `detector_unavailable` with no score.
+  Each record has `DetectorUnavailable` and stopped at `model_load`.
+- **Recovery:** after the files are restored, 1 of 1 returns 200 with no
+  restart.
+- **Surrogates:** 3 of 3 return 500 `internal_error`, and the body's
+  `request_id` equals the header. Each record stopped at `model`.
+- **Audit log:** exactly 2 new `decided` entries (the two 200s).
+- **Worker:** all 12 records show the same `pid`, and both `/ping`s return
+  200.
+- **Timing:** the first 503 takes 10 s or less. Every other failure takes
+  500 ms or less.
+
+**How to test:** Copy the gpt2 cache folder to a temp folder under a different
+name, then start gunicorn with `HF_HUB_CACHE` pointing there and
+`HF_HUB_OFFLINE=1`. In order:
+1. 5 × `/submit` (expect 503).
+2. `/ping`.
+3. Rename the folder back to `models--gpt2`.
+4. `/submit` (expect 200).
+5. S1, S2, S3 (expect 500 each).
+6. `/ping`.
+7. `/submit` (expect 200).
+
+Count the `decided` lines before and after. If the first request returns 200,
+the setup is wrong.
+
+**Why:**
+- **The handlers:** these are the two error handlers built this unit. A JSON
+  code tells the calling site what to do: "try later" or "something broke".
+- **Nothing decided:** the audit log is the evidence in a dispute.
+- **One pid:** a worker restart would hide the crash, make the next writer
+  wait 4.4 s for the model to reload, and reset the rate limits.
+- **No restart:** there's one worker and nobody watching it, so it has to
+  recover on its own.
+- **The first 503's timing:** it pays the same torch import as a cold start,
+  so it gets the same budget as C4's cold request.
+- **Not tested:** `/health` saying `ok: true` during an outage (seen in
+  Milestone 3). That's a known gap, recorded under What's Still Broken.
+
+## C4. Cold requests answer within 10 s, warm ones within 500 ms
+
+**Criterion:** After a fresh start, the first `/submit` (cold) returns 200
+within 10 s. Each of the next 25 (warm) returns 200 within 500 ms.
+
+**Target:** In each trial, cold 1 of 1 ≤ 10 s, and warm 25 of 25 ≤ 500 ms.
+
+**How to test:** Start a fresh `gunicorn -c gunicorn.conf.py app:app`. As soon
+as `/health` answers, send `BOUNDARY_TEXT` (10,000 characters, the longest
+allowed). Then run `python measure.py --n 20 --label c45_t<n>`, then send
+`BOUNDARY_TEXT` 5 more times. Count the round trips.
+
+**Why:**
+- **10 s cold:** about when a writer gives up and clicks again. That second
+  click queues behind the first on the only worker, makes a second decision,
+  and uses up their rate limit.
+- **500 ms warm:** half the second at which a person notices waiting, which
+  leaves the rest for the site and the network.
+- **All 25, not a p95:** with one worker, one slow request delays everyone
+  behind it.
+- **Not stricter:** gpt2's forward pass alone averages 136 ms (Milestone 3),
+  and a near-warm cold start would mean preloading the model, which this run
+  path doesn't claim.
+
+## C5. A warm run costs at most 0.5 CPU-seconds, and memory peaks at 1,536 MB
+
+**Criterion:** Over C4's 25 warm requests, every record's `cpu_ms` is 500 or
+less, and the highest `max_rss_mb` is 1,536 or less.
+
+**Target:** In each trial, 25 of 25 at or under 500 `cpu_ms`, and a peak of
+1,536 MB or less.
+
+**How to test:** Use C4's session, not counting the cold request. Read
+`cpu_ms` from measure.py's table and from the 5 `BOUNDARY_TEXT` records. Take
+the highest `max_rss_mb` in the trial.
+
+**Why:**
+- **Memory decides the host.** Milestone 3 measured more than 1 GB, so this
+  needs a 2 GB instance. 1,536 MB is 75% of that, which leaves room for the
+  OS. Over it, the bill doubles or the worker gets killed mid-request with no
+  record.
+- **CPU:** `cpu_ms` is the number the hundred-a-day cost multiplies. On a
+  1-vCPU host, a run over 0.5 CPU-s can't meet C4's 500 ms.
+- **Not stricter:** Milestone 3's 0.263 mean is my own measurement, not what
+  the host needs.
+- **macOS:** the memory figure is measured on macOS, and Linux will differ.
