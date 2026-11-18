@@ -23,15 +23,21 @@ Routes:
     GET  /content/<id> one item's current status (stretch)
     GET  /verify/prompt  verified-writer check, step 1 (stretch)
     POST /verify      verified-writer check, step 2 (stretch)
-    GET  /log         the audit log. Already works
+    GET  /log         the audit log (?log=requests for the request log)
     GET  /health      is the service up, and is the model loaded
 """
 
+import hashlib
+import os
 import random
+import sys
+import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
+from werkzeug.exceptions import HTTPException
 
 import audit
 import config
@@ -41,7 +47,112 @@ import scoring
 import stylometry
 from validation import Refused, parse_submission
 
+try:
+    import resource  # not on Windows
+except ImportError:
+    resource = None
+
 app = Flask(__name__)
+
+
+# ── Request log — UNIT 9 ──────────────────────────────────────────────────────
+# One record per request in logs/requests.jsonl: what came in, what went out,
+# how long it took. Registered BEFORE the rate limiter, so the clock is already
+# running when a 429 is raised, and refused or crashed requests are logged too.
+
+OUTPUT_FIELDS = ("content_id", "guess", "confidence", "status", "error", "passed",
+                 "ok", "detector_loaded", "count")
+
+
+@app.before_request
+def _start_clock():
+    g.request_id = uuid.uuid4().hex[:12]
+    g.t0, g.cpu0, g.stages, g.error = time.perf_counter(), time.process_time(), {}, None
+
+
+@app.after_request
+def _log_request(response):
+    try:
+        audit.log_request(
+            request_id=g.request_id, method=request.method,
+            route=request.url_rule.rule if request.url_rule else request.path,
+            status=response.status_code,
+            duration_ms=_ms(time.perf_counter() - g.t0),
+            cpu_ms=_ms(time.process_time() - g.cpu0),
+            max_rss_mb=_max_rss_mb(),
+            input=_input_summary(), output=_output_summary(response),
+            stages_ms=g.stages or None, error=g.error, pid=os.getpid(),
+        )
+    except Exception as exc:  # noqa: BLE001 — a failed log write must not fail the response
+        print(f"request log write failed: {exc!r}", file=sys.stderr)
+    response.headers["X-Request-Id"] = g.request_id
+    return response
+
+
+@contextmanager
+def _stage(name: str):
+    """Time one step of a request into its record's stages_ms (the latency breakdown)."""
+    t = time.perf_counter()
+    try:
+        yield
+    finally:
+        g.stages[name] = _ms(time.perf_counter() - t)
+
+
+def _ms(seconds: float) -> float:
+    return round(seconds * 1000, 2)
+
+
+def _max_rss_mb() -> float | None:
+    """This process's peak resident memory so far. ru_maxrss is bytes on macOS, KB on Linux."""
+    if resource is None:
+        return None
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return round(rss / (2**20 if sys.platform == "darwin" else 2**10), 1)
+
+
+def _input_summary() -> dict:
+    """What came in: who and how much, and the text as a fingerprint and a short preview."""
+    if request.method == "GET":
+        return dict(request.args)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return {"bytes": request.content_length or 0, "json_object": False}
+    summary = {k: payload[k] for k in ("creator_id", "content_id") if k in payload}
+    text = payload.get("text")
+    if isinstance(text, str):
+        summary.update(chars=len(text), words=len(stylometry.words(text)), preview=text[:60],
+                       sha256=hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()[:12])
+    return summary
+
+
+def _output_summary(response) -> dict:
+    """What went out: the size, and the few fields a reader needs from a small JSON body."""
+    out = {"bytes": response.content_length}
+    if response.is_json and (response.content_length or 0) < 65_536:
+        body = response.get_json(silent=True)
+        if isinstance(body, dict):
+            out.update((k, body[k]) for k in OUTPUT_FIELDS if k in body)
+    return out
+
+
+@app.errorhandler(detector.DetectorUnavailable)
+def detector_unavailable(exc):
+    """The model can't load. Nothing was scored, and that's not the writer's fault."""
+    g.error = {"type": type(exc).__name__, "message": str(exc)[:300]}
+    return jsonify({"error": "detector_unavailable",
+                    "message": "The checker isn't available right now. Nothing was scored — please try again later."}), 503
+
+
+@app.errorhandler(Exception)
+def internal_error(exc):
+    """Anything unexpected becomes a JSON 500 and a logged error, never a bare crash page."""
+    if isinstance(exc, HTTPException):  # 404, 405 … keep their own status
+        return exc
+    g.error = {"type": type(exc).__name__, "message": str(exc)[:300]}
+    app.logger.exception("unhandled error in %s", request.path)
+    return jsonify({"error": "internal_error", "request_id": g.request_id,
+                    "message": "Something went wrong on our side. Nothing was scored."}), 500
 
 
 # ── Rate limiting — UNIT 8 ────────────────────────────────────────────────────
@@ -172,26 +283,29 @@ def submit():
     endpoint contract in README.md.
     """
     try:
-        creator_id, text, removed = parse_submission(request.get_json(silent=True))
+        with _stage("validate"):
+            creator_id, text, removed = parse_submission(request.get_json(silent=True))
     except Refused as refused:
         return _reject(refused.creator_id, refused.code, refused.error, refused.message)
 
     content_id = str(uuid.uuid4())
     scores = _score(text)
     guess, label = scoring.score_to_label(scores["confidence"])
-    verified = _is_verified(creator_id)
+    with _stage("verified_lookup"):
+        verified = _is_verified(creator_id)
     if verified:
         label += " " + scoring.VERIFIED_NOTE
     if removed:
         label += " " + scoring.STRIPPED_NOTE
 
-    audit.log_decision(
-        content_id=content_id, creator_id=creator_id, guess=guess,
-        model_score=scores["model_score"], style_score=scores["style_score"],
-        combined_score=scores["confidence"], label=label,
-        marker_score=scores["marker_score"], verified_writer=verified,
-        instructions_removed=removed,
-    )
+    with _stage("audit_write"):
+        audit.log_decision(
+            content_id=content_id, creator_id=creator_id, guess=guess,
+            model_score=scores["model_score"], style_score=scores["style_score"],
+            combined_score=scores["confidence"], label=label,
+            marker_score=scores["marker_score"], verified_writer=verified,
+            instructions_removed=removed,
+        )
     return jsonify({
         "content_id": content_id,
         "creator_id": creator_id,
@@ -206,12 +320,19 @@ def submit():
 
 
 def _score(text: str) -> dict:
-    """All three signals and the combined score for one text."""
-    model_score = detector.model_signal(text)
-    style_score = stylometry.style_signal(text)
-    marker_score = markers.marker_signal(text)
+    """All three signals and the combined score for one text, each step timed."""
+    with _stage("model_load"):  # ~0 ms once loaded; the whole load on a cold start
+        detector.warm_up()
+    with _stage("model"):
+        model_score = detector.model_signal(text)
+    with _stage("style"):
+        style_score = stylometry.style_signal(text)
+    with _stage("markers"):
+        marker_score = markers.marker_signal(text)
+    with _stage("combine"):
+        confidence = scoring.combine_signals(model_score, style_score, marker_score)
     return {
-        "confidence": scoring.combine_signals(model_score, style_score, marker_score),
+        "confidence": confidence,
         "model_score": model_score,
         "style_score": style_score,
         "marker_score": marker_score,
@@ -367,7 +488,8 @@ def get_log():
     now to see whether your logging is actually working.
     """
     limit = request.args.get("limit", type=int)
-    entries = audit.read_entries(limit=limit)
+    path = config.REQUEST_LOG if request.args.get("log") == "requests" else config.AUDIT_LOG
+    entries = audit.read_entries(limit=limit, path=path)
     return jsonify({"count": len(entries), "entries": entries})
 
 
