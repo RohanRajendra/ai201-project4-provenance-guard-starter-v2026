@@ -1729,4 +1729,69 @@ almost never hear that their work looks like a person's.
 
 ---
 
+## Capstone
+
+*Unit 9. Every section this unit asks for is under this heading. Everything
+above it is units 7 and 8.*
+
+**What This Extends**
+
+Provenance Guard, the project 4 service from units 7 and 8. `POST /submit`
+scores a piece of writing with three local signals (gpt2 predictability, style,
+stock phrases) and labels it human, unsure or AI. Until now it has only ever run
+as `python app.py`, which is Flask's development server. Its only log was the
+decision log (`logs/audit.jsonl`), which records what was decided, but not what
+came in or how long it took. A request that crashed left no line at all.
+
+New this unit:
+
+- **A run path that isn't the editor:** `gunicorn` with a committed config
+  (`gunicorn.conf.py`) and one start command.
+- **A structured request log,** `logs/requests.jsonl`. It writes one record per
+  HTTP request, including rejected and crashed ones. Each record carries the
+  timestamp, request id, route, a summary of what came in and what went out,
+  the status, duration, CPU time and memory. `/submit` records also time each
+  stage.
+- **Failures answered in JSON and logged:** a model that can't load returns
+  `503 detector_unavailable`, and anything else returns `500 internal_error`.
+- **A measured cost per run.**
+
+**The Shape**
+
+**A — Deploy and instrument.** The extension is the operational layer around a
+service that already works: the run path, the request log, and the numbers that
+come out of it (latency, CPU-seconds, memory). The scoring itself is untouched.
+It runs locally (Path B). gpt2 and torch need more than the course's 512 MB free
+tier, as RUNNING.md works out, so a hosted copy is a stretch item on a host with
+enough memory.
+
+Out of scope, on purpose:
+
+- **No change to the signals, weights, thresholds or labels.** That keeps unit
+  8's results comparable, and it means a latency or cost number measures the
+  same pipeline before and after the improvement.
+- **No fixes to unit 8's leftovers:** validating before rate limiting
+  (RQ10/RQ11), `type_token_ratio` running backwards, the dated marker list.
+  Those belong to shapes B and C.
+- **No scaling out and no log infrastructure.** It runs one worker: a second
+  worker would load a second copy of gpt2 and split the in-memory rate limiter's
+  counts in two. There's no log database, rotation or dashboard either. The log
+  is a file you read back.
+
+**Stretch (declared before building)**
+
+1. **Latency breakdown.** Every `/submit` record carries `stages_ms`: validate,
+   model load, model, style, markers, combine, verified-writer lookup and audit
+   write. It's built with Milestone 3's logging, and the numbers and the
+   dominant stage go under *What It Costs*.
+2. **Load observation.** The service at ten times the normal rate the criteria
+   are run at, with latency, error rate and CPU per run reported beside the
+   normal-rate numbers.
+3. **Both run paths.** The same service hosted on a free Hugging Face Space
+   (Docker) as well as run locally, with a note on what differed.
+4. **A second measured improvement,** drawn from the diagnosis, with a third
+   run log in the same format.
+
+---
+
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
