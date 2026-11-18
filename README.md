@@ -1927,6 +1927,94 @@ question about one writer, it reads and parses the entire audit log on every
 submission (about 1,750 lines, 0.6 MB at the time), so its cost tracks the
 size of the log, not the size of the request.
 
+**Run Log and Verdicts**
+
+Criteria are in `criteria.md` → *Capstone criteria*. `run_capstone.py` runs
+C2–C5 three times, and every trial starts its own fresh gunicorn. With `--c1`
+it runs C1: three fresh clones, each with empty caches. Raw output for the
+before-fix run is in `results/capstone_2026-11-18_1836_before.md` (C2–C5) and
+`results/capstone_2026-11-18_1843_before_c1.md` (C1), with each trial's server
+output in the folder of the same name. A one-trial shakedown of the harness
+(`…_shakedown`) ran first and isn't counted. An earlier shakedown went to
+another program on port 5001, so it measured nothing and was deleted.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| C1. A fresh clone runs from RUNNING.md alone | 0 extra steps · `decided` · 1 log line at 200 | 0 · decided · 1 line | 0 · decided · 1 line | 0 · decided · 1 line | **MET** |
+| C2. Every request leaves one correct record | 26/26, log +26, 0 write failures | 25/26 · +25 · 1 | 25/26 · +25 · 1 | 25/26 · +25 · 1 | **MISSED** |
+| C3. Failures are JSON, decide nothing, recover | 5/5 503 · recovers · 3/3 500 · 2 decided · 1 pid · timing | all pass (first 503 2.80 s) | all pass (2.83 s) | all pass (3.67 s) | **MET** |
+| C4. Cold ≤ 10 s, warm ≤ 500 ms | cold 1/1, warm 25/25 | 3.62 s · 25/25 (max 314 ms) | 3.77 s · 25/25 (max 243 ms) | 4.30 s · 25/25 (max 256 ms) | **MET** |
+| C5. Warm ≤ 0.5 CPU-s, peak ≤ 1,536 MB | 25/25, peak ≤ 1,536 | 20/25 (max 585) · 1,268 MB | 25/25 (max 489) · 1,307 MB | 23/25 (max 506) · 1,214 MB | **MISSED** |
+
+*Real output, run 1.*
+
+**C1**, from `run_capstone.py::c1`. It runs RUNNING.md's own code blocks in
+a new folder, changing only the clone URL and the port. The transcript is
+`capstone_2026-11-18_1843_before_c1/c1_t1_terminal.txt`: every wheel and the
+model downloaded again, `# setup exit 0`, and no other command. The curl's body
+began `{"chars_removed":0,"confidence":0.4,"content_id":"d0c9e47e-0281-4735-8e06-d35b98580c47",…,"status":"decided"`,
+and this is its one line in the clone's `logs/requests.jsonl`:
+
+```json
+{"timestamp": "2026-11-18T23:44:54.479+00:00", "request_id": "5140cc05f771", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 4265.47, "cpu_ms": 3415.09, "max_rss_mb": 873.4, "input": {"creator_id": "me", "chars": 170, "words": 32, "preview": "I walked to the market this morning because the bus was late", "sha256": "964596cbb966"}, "output": {"bytes": 490, "content_id": "d0c9e47e-0281-4735-8e06-d35b98580c47", "guess": "unsure", "confidence": 0.4, "status": "decided"}, "stages_ms": {"validate": 0.26, "model_load": 4178.95, "model": 78.32, "style": 0.14, "markers": 0.04, "combine": 0.0, "verified_lookup": 6.81, "audit_write": 0.24}, "error": null, "pid": 81399}
+```
+
+*A discarded C1 run:* the first attempt
+(`…_1838_before_c1_DISCARDED_stray_server`) met trial 1. Trials 2 and 3 then
+got `decided` but had 0 lines in their own clone's log, because trial 1's
+gunicorn had outlived its `bash` wrapper and answered their curls ("Connection
+in use" in `c1_t2_server.txt`). That's exactly what the `content_id` check is
+there to catch. It was a harness bug (fixed with `exec`), not a RUNNING.md
+miss, so the run was rerun in full.
+
+**C2**, from `run_capstone.py::c2` and `c2_check`. 25 rows pass, and #26
+(JSON nested 100,000 deep) has no record:
+
+```json
+{"#": 26, "request": "POST /submit", "status": 500, "client_ms": 8.24, "rid": "c0d8f586b6f1", "fails": ["0 records"]}
+```
+
+Its only trace is in the server output
+(`capstone_2026-11-18_1836_before/c2_t1_server.txt`), printed by
+`app.py::_log_request`:
+
+```
+request log write failed: RecursionError('maximum recursion depth exceeded while decoding a JSON array from a unicode string')
+```
+
+A passing row's record, the 429 (`logs/requests.jsonl`):
+
+```json
+{"timestamp": "2026-11-18T23:36:59.961+00:00", "request_id": "55143c2161ec", "method": "POST", "route": "/submit", "status": 429, "duration_ms": 0.91, "cpu_ms": 0.86, "max_rss_mb": 1149.8, "input": {"creator_id": "c2_t1_flood", "chars": 1941, "words": 278, "preview": "Additionally, I had the opportunity to collaborate with the ", "sha256": "0b0ffa256bff"}, "output": {"bytes": 103, "error": "rate_limited"}, "stages_ms": null, "error": null, "pid": 79169}
+```
+
+**C3**, from `run_capstone.py::c3`. The first 503, and the 200 after the
+model folder was renamed back with no restart (same `pid`, and `model_load`
+308 ms):
+
+```json
+{"timestamp": "2026-11-18T23:37:03.947+00:00", "request_id": "ed67e878bf15", "method": "POST", "route": "/submit", "status": 503, "duration_ms": 2801.2, "cpu_ms": 2784.01, "max_rss_mb": 304.2, "input": {"creator_id": "c3_t1_1", "chars": 1140, "words": 178, "preview": "The GuiController represents the class that acts as a contro", "sha256": "73dc0bb45c49"}, "output": {"bytes": 134, "error": "detector_unavailable"}, "stages_ms": {"validate": 0.63, "model_load": 2799.92}, "error": {"type": "DetectorUnavailable", "message": "Couldn't load 'gpt2': We couldn't connect to 'https://huggingface.co' to load the files, a…"}, "pid": 79215}
+{"timestamp": "2026-11-18T23:37:05.668+00:00", "request_id": "262ef1aab3f8", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 1704.48, "cpu_ms": 1237.27, "max_rss_mb": 936.9, "input": {"creator_id": "c3_t1_7", "chars": 1941, "words": 278, "preview": "Additionally, I had the opportunity to collaborate with the ", "sha256": "0b0ffa256bff"}, "output": {"bytes": 501, "content_id": "74e418e5-e895-4456-bb8f-61014abe71d3", "guess": "unsure", "confidence": 0.6458, "status": "decided"}, "stages_ms": {"validate": 0.67, "model_load": 308.5, "model": 1384.93, "style": 1.3, "markers": 0.35, "combine": 0.01, "verified_lookup": 7.6, "audit_write": 0.42}, "error": null, "pid": 79215}
+```
+
+A surrogate 500 (from C2's run, same handler, message trimmed):
+
+```json
+{"request_id": "18dc1c8aee00", "route": "/submit", "status": 500, "duration_ms": 7.69, "output": {"bytes": 121, "error": "internal_error"}, "stages_ms": {"validate": 0.44, "model_load": 0.0, "model": 0.08}, "error": {"type": "TypeError", "message": "TextEncodeInput must be Union[TextInputSequence, Tuple[InputSequence, InputSequence]]"}, "pid": 79169}
+```
+
+**C4 and C5**, from `run_capstone.py::c45` (with `measure.py::main` for the
+20 `MY_WRITING` runs). These are the round trips (ms) and `cpu_ms` of run 1's
+five 10,000-character warm requests, the last five of the 25:
+
+```
+wall ms: 256.9  314.35  272.17  253.76  241.22
+cpu ms:  500.6  584.64  518.01  517.63  497.67
+```
+
+Four of those are over 500. Run 1's fifth miss was a `MY_WRITING` run
+(278 words): 255.93 ms wall, 502.13 cpu ms.
+
 ---
 
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**
