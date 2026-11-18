@@ -18,7 +18,7 @@ assumed — the starter ships one that already answers.
 | OS | macOS or Linux. gunicorn doesn't run on Windows: use WSL, or `python app.py` (the dev server, same routes) |
 | Dependencies | `requirements.lock.txt`, every package pinned exactly as tested (torch 2.15.0, transformers 4.57.6, Flask 3.1.3, gunicorn 23.0.0 …). `requirements.txt` holds the ranges they came from. The venv is ~950 MB |
 | Model | `gpt2` from Hugging Face: `model.safetensors` 548 MB plus 2.8 MB of tokenizer files, 525 MB in the cache. `python detector.py` downloads it once |
-| Memory | ~890 MB resident once the model is loaded (`max_rss_mb` in the request log), which is why this can't run on a 512 MB free host |
+| Memory | ~850 MB resident once the model is loaded, peaking at 1,256 MB after ten submissions (`max_rss_mb` in the request log). That's why this can't run on a 512 MB free host |
 
 **Set up once**
 
