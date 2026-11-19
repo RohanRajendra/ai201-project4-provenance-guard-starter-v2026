@@ -37,18 +37,47 @@ _MARKUP = [
 ]
 
 
-def strip_instructions(text: str) -> tuple[str, int]:
-    """(cleaned text, characters removed). Unchanged text comes back as-is."""
-    clean = text
+_JSON_KEY = _MARKUP[-1]
+_JSON_LEFTOVER = re.compile(r'\s*"\s*,\s*')        # the `", ` left between removed JSON pairs
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?)])\s+|\n+")
+
+
+def strip_markup(text: str) -> tuple[str, bool]:
+    """Step 1: blank out tags, scripts and JSON key/value pairs. Returns (text, had_json)."""
+    had_json = bool(_JSON_KEY.search(text))
     for pattern in _MARKUP:
-        clean = pattern.sub(" ", clean)
-    had_json = bool(_MARKUP[-1].search(text))
-    sentences = re.split(r"(?<=[.!?)])\s+|\n+", clean)
-    clean = " ".join(s for s in sentences if s.strip() and not _INSTRUCTION.search(s))
-    if had_json:  # leftover `", ` between removed JSON pairs — never touch plain quoted dialogue
-        clean = re.sub(r'\s*"\s*,\s*', " ", clean)
-    clean = re.sub(r"\s+", " ", clean).strip()
-    if clean == re.sub(r"\s+", " ", text).strip():
+        text = pattern.sub(" ", text)
+    return text, had_json
+
+
+def drop_instruction_sentences(text: str) -> str:
+    """Step 2: drop every sentence (or line) that addresses the checker."""
+    return " ".join(s for s in _SENTENCE_BREAK.split(text) if s.strip() and not _INSTRUCTION.search(s))
+
+
+def tidy_json_leftovers(text: str) -> str:
+    """Step 3, only after JSON was removed: plain quoted dialogue never reaches this."""
+    return _JSON_LEFTOVER.sub(" ", text)
+
+
+def _normalise(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def strip_instructions(text: str) -> tuple[str, int]:
+    """
+    (cleaned text, characters removed). Unchanged text comes back as-is.
+
+    The order matters: markup first (so a tag can't hide a sentence break),
+    then sentences, then the JSON leftovers — and that last step only when
+    step 1 actually found JSON. tests/test_sanitize.py pins each step.
+    """
+    clean, had_json = strip_markup(text)
+    clean = drop_instruction_sentences(clean)
+    if had_json:
+        clean = tidy_json_leftovers(clean)
+    clean = _normalise(clean)
+    if clean == _normalise(text):
         return text, 0
     return clean, len(text) - len(clean)
 

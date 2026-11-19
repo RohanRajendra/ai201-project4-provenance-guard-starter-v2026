@@ -1,0 +1,12 @@
+[2026-11-18 18:42:36 -0500] [80740] [INFO] Starting gunicorn 23.0.0
+[2026-11-18 18:42:36 -0500] [80740] [ERROR] Connection in use: ('127.0.0.1', 5006)
+[2026-11-18 18:42:36 -0500] [80740] [ERROR] connection to ('127.0.0.1', 5006) failed: [Errno 48] Address already in use
+[2026-11-18 18:42:37 -0500] [80740] [ERROR] Connection in use: ('127.0.0.1', 5006)
+[2026-11-18 18:42:37 -0500] [80740] [ERROR] connection to ('127.0.0.1', 5006) failed: [Errno 48] Address already in use
+[2026-11-18 18:42:38 -0500] [80740] [ERROR] Connection in use: ('127.0.0.1', 5006)
+[2026-11-18 18:42:38 -0500] [80740] [ERROR] connection to ('127.0.0.1', 5006) failed: [Errno 48] Address already in use
+[2026-11-18 18:42:39 -0500] [80740] [ERROR] Connection in use: ('127.0.0.1', 5006)
+[2026-11-18 18:42:39 -0500] [80740] [ERROR] connection to ('127.0.0.1', 5006) failed: [Errno 48] Address already in use
+[2026-11-18 18:42:40 -0500] [80740] [ERROR] Connection in use: ('127.0.0.1', 5006)
+[2026-11-18 18:42:40 -0500] [80740] [ERROR] connection to ('127.0.0.1', 5006) failed: [Errno 48] Address already in use
+[2026-11-18 18:42:41 -0500] [80740] [ERROR] Can't connect to ('127.0.0.1', 5006)

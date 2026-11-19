@@ -1,0 +1,111 @@
+[2026-11-18 18:37:35 -0500] [79423] [INFO] Starting gunicorn 23.0.0
+[2026-11-18 18:37:35 -0500] [79423] [INFO] Listening at: http://127.0.0.1:5005 (79423)
+[2026-11-18 18:37:35 -0500] [79423] [INFO] Using worker: sync
+[2026-11-18 18:37:35 -0500] [79424] [INFO] Booting worker with pid: 79424
+`loss_type=None` was set in the config but it is unrecognized. Using the default loss: `ForCausalLMLoss`.
+[2026-11-18 18:37:40,490] ERROR in app: unhandled error in /submit
+Traceback (most recent call last):
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/flask_limiter/extension.py", line 1314, in __inner
+    return cast(R, flask.current_app.ensure_sync(obj)(*a, **k))
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/app.py", line 292, in submit
+    scores = _score(text)
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/app.py", line 327, in _score
+    model_score = detector.model_signal(text)
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/detector.py", line 128, in model_signal
+    return squash(perplexity(text))
+                  ~~~~~~~~~~^^^^^^
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/detector.py", line 97, in perplexity
+    encoded = tokenizer(
+        text,
+    ...<2 lines>...
+        max_length=config.DETECTOR_MAX_TOKENS,
+    )
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/transformers/tokenization_utils_base.py", line 3078, in __call__
+    encodings = self._call_one(text=text, text_pair=text_pair, **all_kwargs)
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/transformers/tokenization_utils_base.py", line 3188, in _call_one
+    return self.encode_plus(
+           ~~~~~~~~~~~~~~~~^
+        text=text,
+        ^^^^^^^^^^
+    ...<18 lines>...
+        **kwargs,
+        ^^^^^^^^^
+    )
+    ^
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/transformers/tokenization_utils_base.py", line 3263, in encode_plus
+    return self._encode_plus(
+           ~~~~~~~~~~~~~~~~~^
+        text=text,
+        ^^^^^^^^^^
+    ...<18 lines>...
+        **kwargs,
+        ^^^^^^^^^
+    )
+    ^
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/transformers/models/gpt2/tokenization_gpt2_fast.py", line 126, in _encode_plus
+    return super()._encode_plus(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/transformers/tokenization_utils_fast.py", line 627, in _encode_plus
+    batched_output = self._batch_encode_plus(
+        batched_input,
+    ...<17 lines>...
+        **kwargs,
+    )
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/transformers/models/gpt2/tokenization_gpt2_fast.py", line 116, in _batch_encode_plus
+    return super()._batch_encode_plus(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/transformers/tokenization_utils_fast.py", line 553, in _batch_encode_plus
+    encodings = self._tokenizer.encode_batch(
+        batch_text_or_text_pairs,
+        add_special_tokens=add_special_tokens,
+        is_pretokenized=is_split_into_words,
+    )
+TypeError: TextEncodeInput must be Union[TextInputSequence, Tuple[InputSequence, InputSequence]]
+[2026-11-18 18:37:40,524] ERROR in app: unhandled error in /submit
+Traceback (most recent call last):
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/flask_limiter/extension.py", line 1310, in __inner
+    self.limiter._check_request_limit(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        in_middleware=False, callable_name=name
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/flask_limiter/extension.py", line 1187, in _check_request_limit
+    raise e
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/flask_limiter/extension.py", line 1169, in _check_request_limit
+    self.__evaluate_limits(endpoint, all_limits)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/flask_limiter/extension.py", line 1077, in __evaluate_limits
+    limit_key = lim.key_func()
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/app.py", line 200, in rate_limit_key
+    payload = request.get_json(silent=True)
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/werkzeug/wrappers/request.py", line 623, in get_json
+    rv = self.json_module.loads(data)
+  File "/Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026/.venv/lib/python3.13/site-packages/flask/json/provider.py", line 187, in loads
+    return json.loads(s, **kwargs)
+           ~~~~~~~~~~^^^^^^^^^^^^^
+  File "/Users/adri/.pyenv/versions/3.13.2/lib/python3.13/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/Users/adri/.pyenv/versions/3.13.2/lib/python3.13/json/decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/adri/.pyenv/versions/3.13.2/lib/python3.13/json/decoder.py", line 361, in raw_decode
+    obj, end = self.scan_once(s, idx)
+               ~~~~~~~~~~~~~~^^^^^^^^
+RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string
+request log write failed: RecursionError('maximum recursion depth exceeded while decoding a JSON array from a unicode string')
+[2026-11-18 18:37:40 -0500] [79423] [INFO] Handling signal: term
+[2026-11-18 18:37:40 -0500] [79424] [INFO] Worker exiting (pid: 79424)
+[2026-11-18 18:37:41 -0500] [79423] [INFO] Shutting down: Master

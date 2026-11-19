@@ -64,6 +64,11 @@ LABELS = {
 # check (stretch). It adds a fact about the writer; it never changes the guess.
 VERIFIED_NOTE = "This writer has completed our live writing check."
 
+# Appended when sanitize.py removed part of a submission before scoring, so the
+# writer knows the result is about less than they sent.
+STRIPPED_NOTE = ("Part of this submission wasn't scored because it read as instructions "
+                 "to our check rather than writing.")
+
 
 def score_to_label(score: float) -> tuple[str, str]:
     """

@@ -39,15 +39,18 @@ def sentences(text: str) -> list[str]:
 
 
 def words(text: str) -> list[str]:
-    """Split into lowercase words, punctuation stripped. Given to you."""
-    return re.findall(r"[a-z0-9']+", text.lower())
+    """
+    Split into lowercase words, punctuation stripped. Any script counts as
+    letters, and an apostrophe (straight or curly) inside a word keeps it whole.
+    """
+    return re.findall(r"[^\W_]+(?:['\u2019][^\W_]+)*", text.lower())
 
 
 # ── The three measures ───────────────────────────────────────────────────────
 
 # Punctuation that varies between writers. Full stops and commas don't — every
 # writer uses them — so they're left out.
-EXPRESSIVE_PUNCTUATION = re.compile(r"[;:!?()\u2014\u2013\u2026\"]|--")
+EXPRESSIVE_PUNCTUATION = re.compile(r"[;:!?()\u2014\u2013\u2026\"\u201c\u201d]|--")
 
 # Window for the moving-average type-token ratio. Plain TTR falls as text gets
 # longer; averaging over fixed windows makes a 60-word and a 600-word text

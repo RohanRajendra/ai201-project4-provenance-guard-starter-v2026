@@ -8,6 +8,75 @@ assumed — the starter ships one that already answers.
 
 ---
 
+## The run path (unit 9 capstone): Path B, local with logs
+
+**What the environment needs**
+
+| | |
+|---|---|
+| Python | 3.11–3.13, not 3.14. Tested on 3.13.2 |
+| OS | macOS or Linux. gunicorn doesn't run on Windows: use WSL, or `python app.py` (the dev server, same routes) |
+| Dependencies | `requirements.lock.txt`, every package pinned exactly as tested (torch 2.15.0, transformers 4.57.6, Flask 3.1.3, gunicorn 23.0.0 …). `requirements.txt` holds the ranges they came from. The venv is ~950 MB |
+| Model | `gpt2` from Hugging Face: `model.safetensors` 548 MB plus 2.8 MB of tokenizer files, 525 MB in the cache. `python detector.py` downloads it once |
+| Memory | ~850 MB resident once the model is loaded, peaking at 1,256 MB after ten submissions (`max_rss_mb` in the request log). That's why this can't run on a 512 MB free host |
+
+**Set up once**
+
+```bash
+git clone <this repo's URL> provenance-guard
+cd provenance-guard
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.lock.txt
+python detector.py
+```
+
+**Start it: the one command**
+
+```bash
+gunicorn -c gunicorn.conf.py app:app
+```
+
+`gunicorn.conf.py` runs one worker on `HOST:PORT` from the environment
+(default `127.0.0.1:5000`) with a 120 s timeout. It says why it's one worker.
+
+**Check it** from a second terminal:
+
+```bash
+curl http://127.0.0.1:5000/health
+```
+
+```bash
+curl -X POST http://127.0.0.1:5000/submit -H "Content-Type: application/json" -d '{"creator_id": "me", "text": "I walked to the market this morning because the bus was late again, and on the way I passed the old bakery that closed last spring. Somebody has painted the windows blue."}'
+```
+
+**Where the record goes:** one line per request in `logs/requests.jsonl`, and
+one line per decision in `logs/audit.jsonl`, as before. Read the request log
+back over HTTP with:
+
+```bash
+curl "http://127.0.0.1:5000/log?log=requests&limit=5"
+```
+
+**Measure it:** `python measure.py --n 10 --label cost` sends ten submissions
+and writes `results/measure_<stamp>_cost.md`.
+
+**What the clean-clone test hit** (fresh clone in a new folder, fresh venv,
+`pip install -r requirements.lock.txt` in 44 s, then the commands above):
+
+- **macOS: port 5000 is also AirPlay Receiver's.** `127.0.0.1:5000` still
+  binds and answers, but `localhost:5000` can reach AirPlay and get a `403`
+  from `AirTunes`. Use `127.0.0.1` as written, or move the service:
+  `PORT=5001 gunicorn -c gunicorn.conf.py app:app`.
+- **`python test.py` can warn "Detector model — not downloaded" when it is.**
+  It only looks in `~/.cache/huggingface`. If `XDG_CACHE_HOME` or `HF_HOME`
+  moves the cache, trust `python detector.py`: if it prints a perplexity, the
+  model is there.
+- **Not covered by the test:** the 548 MB download itself, because the clone
+  shared this machine's model cache.
+
+---
+
 ## Before your first class
 
 ```bash
@@ -199,6 +268,10 @@ what it is. A real one comes from `gunicorn`, which is in
 gunicorn app:app --bind 0.0.0.0:$PORT
 ```
 
+*As built in unit 9:* `gunicorn -c gunicorn.conf.py app:app`, with the bind,
+the worker count and the timeout in the config file. See **The run path** at
+the top of this file.
+
 Two settings do the work, and both read the environment:
 
 | Variable | Default | What it does |
@@ -249,6 +322,10 @@ your write-up; that's the deliverable.
 | `scenarios.py` | What your test runs. **You fill this in** |
 | `criteria.md` | Your five criteria. **You write all five** |
 | `logs/audit.jsonl` | Your audit log. **Commit it** |
+| `logs/requests.jsonl` | Unit 9: one record per HTTP request, with timings. **Commit it** |
+| `gunicorn.conf.py` | Unit 9: the run path's server config |
+| `requirements.lock.txt` | Unit 9: the exact versions the run path was tested with |
+| `measure.py` | Unit 9: cost per run, latency breakdown, load |
 | `results/` | Attack runs and run logs. **Commit them** |
 
 ---

@@ -1,0 +1,9 @@
+.git
+.venv
+.claude
+__pycache__
+reqs
+results
+samples
+my_writing_samples.txt
+logs/*.jsonl

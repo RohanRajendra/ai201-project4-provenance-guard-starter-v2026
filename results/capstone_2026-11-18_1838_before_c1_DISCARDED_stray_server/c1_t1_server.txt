@@ -1,0 +1,8 @@
+[2026-11-18 18:39:31 -0500] [79961] [INFO] Starting gunicorn 23.0.0
+[2026-11-18 18:39:31 -0500] [79961] [INFO] Listening at: http://127.0.0.1:5006 (79961)
+[2026-11-18 18:39:31 -0500] [79961] [INFO] Using worker: sync
+[2026-11-18 18:39:31 -0500] [79962] [INFO] Booting worker with pid: 79962
+`loss_type=None` was set in the config but it is unrecognized. Using the default loss: `ForCausalLMLoss`.
+[2026-11-18 18:43:04 -0500] [79961] [INFO] Handling signal: term
+[2026-11-18 18:43:04 -0500] [79962] [INFO] Worker exiting (pid: 79962)
+[2026-11-18 18:43:04 -0500] [79961] [INFO] Shutting down: Master

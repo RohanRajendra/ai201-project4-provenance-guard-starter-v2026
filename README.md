@@ -114,6 +114,8 @@ score, and a sentence the reader sees. The path:
 | `model_score`, `style_score`, `marker_score` | float 0–1 | each signal; higher = more AI-like |
 | `status` | `"decided"` | item status |
 | `verified_writer` | bool | creator holds the verified-human credential |
+| `text_modified` | bool | part of the text was removed as instructions before scoring *(added after unit 8 feedback)* |
+| `chars_removed` | int | how many characters were removed (0 if none) |
 
 Errors: `400 {"error": "invalid_input", "message": ...}` for a missing / empty /
 non-string field or a non-JSON body; `413 {"error": "too_long", ...}` above the
@@ -304,6 +306,9 @@ The text lives in `scoring.py::LABELS`; `scoring.py::score_to_label` picks one.
 For a creator who holds the verified-writer credential (stretch), one sentence
 is appended to whichever label applies: *"This writer has completed our live
 writing check."* The guess and range don't change.
+If `sanitize.py` removed part of the submission (*added after unit 8 feedback*),
+one more sentence is appended: *"Part of this submission wasn't scored because
+it read as instructions to our check rather than writing."*
 All three were reached in the Sample Run below (0.24 → human, 0.63 → unsure,
 0.88 → AI).
 
@@ -1367,7 +1372,7 @@ so it fixed attacks and no criterion. Two costs:
   touch them.
 - **On the human side, it costs real writers the human label.** It didn't cost
   any of mine on this run, but it came close. My #5 has style 0.596 and scored
-  0.380 → human. At 0.600 it would now be unsure. Criterion 3's human input #1
+  0.380 → human. At 0.600 it would now be unsure. My #4, one of criterion 3's human inputs,
   has model 0.581. Any honest writer whose plain style or common words push
   one signal to 0.60 can no longer be told *"This piece looks like it was
   written by a person"*, even when the other two signals say human. Criterion
@@ -1390,7 +1395,8 @@ and logs `instructions_removed` (characters) with the decision. The build is
 a little wider than the declaration, which named only instruction lines. It
 also strips HTML tags and JSON fragments, because PI04 and PI05 inject
 through markup rather than sentences, and that's what changed their scores. The response
-doesn't change, so a caller isn't told what was caught. One change; the
+doesn't change, so a caller isn't told what was caught. *(Reversed after
+feedback: see Post-feedback.)* One change; the
 scoring, weights and thresholds are as they were after the first improvement.
 
 **Which diagnosis pointed at it:** PI01, PI02, PI03 and PI05. Every one of them
@@ -1522,6 +1528,116 @@ injected text no longer moves the score at all. The worst outcome, PI02 at
 
 ---
 
+## Post-feedback: function-level tests, two fixes, visible stripping
+
+*Added after unit 8 was graded.* The feedback said every check went through
+`POST /submit`, so the pure functions could only be tested by starting Flask
+and loading the model, and the criterion 5 failure was really a
+test-isolation problem. This section closes those gaps.
+
+**Tests, with no server, model or rate limiter:**
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+33 tests, stdlib `unittest` (no new dependency), table-driven, run in under a
+second:
+
+| File | What it pins |
+|---|---|
+| `tests/test_stylometry.py` | `words`, `sentences`, the three measures, the anchors, `style_signal` |
+| `tests/test_markers.py` | `marker_hits` (case, commas, whole phrases), `marker_signal` saturation and dilution |
+| `tests/test_scoring.py` | `combine_signals` (average, cap, symmetric floor, disagreement → unsure) and every label boundary |
+| `tests/test_detector.py` | `squash` (perplexity → score), and `model_signal` with perplexity stubbed, so the model never loads |
+| `tests/test_sanitize.py` | each step of `strip_instructions` on its own, what's removed, what's kept, and the known cost (an essay that quotes an injection) |
+| `tests/test_validation.py` | every refusal code and the accepted cases, via `validation.parse_submission`, with no Flask and no limiter |
+| `tests/test_app.py` | `/submit` through Flask's test client, with the model stubbed, limiting off and the log in a temp folder: the new response fields, and 20 bad requests in a row that never hit `429` |
+
+**Red first, then green.** I wrote the tests against the intended behaviour,
+before any code change:
+
+- `results/tests_1_before_any_change.txt`: 5 FAILs and 22 ERRORs. The ERRORs
+  were functions that didn't exist yet. The FAILs were real bugs:
+  - `words("I don’t know.")` split *don’t* into two words.
+  - `words("A café, naïvely.")` dropped the accented letters.
+  - `words()` saw 0 words in Arabic.
+  - Curly quotes “ ” didn't count as punctuation.
+  - The marker rate on non-Latin text was wrong, because its word count was
+    wrong.
+- `results/tests_2_after_refactor.txt`, after the behaviour-preserving
+  refactors: only the 5 bugs, the non-Latin essay they cause, and the new
+  response fields were left red.
+- `results/tests_3_after_fixes.txt`: 33/33 OK. The starter's `test.py` still
+  passes.
+
+**What changed:**
+
+1. **Refactors** (no behaviour change, pinned by the tests above):
+   - `detector.squash` is split out of `model_signal`.
+   - `sanitize.strip_instructions` is now four named steps: `strip_markup` →
+     `drop_instruction_sentences` → `tidy_json_leftovers` (only after JSON was
+     found) → normalise.
+   - `/submit`'s checks moved into `validation.parse_submission`, which raises
+     `Refused`.
+2. **Fix: Unicode text.** `stylometry.words` now matches letters in any
+   script, and keeps straight or curly apostrophes inside a word
+   (`[^\W_]+(?:['’][^\W_]+)*`). Curly quotes count as expressive punctuation.
+3. **Decision: stripping is visible.** `/submit` now returns `text_modified`
+   and `chars_removed`, and `GET /content/<id>` returns `chars_removed`. The
+   label gets one more sentence when anything was removed. I'd hidden it to
+   avoid tipping off attackers, but the reworded-injection probe had already
+   shown rewording beats the filter anyway. A writer whose sentence was
+   dropped has a better claim to know than an attacker has to be kept guessing.
+
+### Fourth before / after: re-measured
+
+Before is the after2 system (`results/*_after2*`). After is
+`results/attack_run_2026-11-11_2148_after3.md`,
+`results/run_2026-11-11_2150_after3.md`,
+`results/checks_2026-11-11_2150_after3.md` and
+`results/checks_2026-11-11_2151_after3_as_written.md`.
+
+**Attack set:** 0 of 56 rows changed. Every status, guess and score is
+identical, and it's still 52 held / 4 broke. None of the attack inputs had
+curly quotes or accented words on the way to a verdict. MF07 (17 Arabic
+words) is still `422`, but now for the right reason: it really is under 20
+words.
+
+**Run log:**
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| 1. My own writing is never labeled AI | `ai` 0/10 **and** `human` ≥ 6/10 | ai 0, human 4/10 | ai 0, human 4/10 | ai 0, human 4/10 | **MISSED** |
+| 2. AI and human text score clearly apart | mean(AI) − mean(human) ≥ 0.30 | 0.180 | 0.180 | 0.180 | **MISSED** |
+| 3. All three labels are reachable | ≥ 2/3 per label, 9/9 label strings | ai 1/3 · human 2/3 · unsure 1/3 · labels 9/9 | ai 1/3 · human 2/3 · unsure 1/3 · labels 9/9 | ai 1/3 · human 2/3 · unsure 1/3 · labels 9/9 | **MISSED** |
+| 4. Every appeal changes status and is recorded | 5/5 on every check | 5/5, all checks pass | 5/5, all checks pass | 5/5, all checks pass | **MET** |
+| 5. Bad input is refused, logged, never scored *(as written)* | 9/9 codes, 0 × 200/500, 9 rejected, 0 decided, 10,000 chars → 200 | 6/9 · 0 × 200/500 · 9 logged (3 `rate_limited`) · 200 | 1/9 · 0 × 200/500 · 9 logged (8 `rate_limited`) · 200 | 1/9 · 0 × 200/500 · 9 logged (8 `rate_limited`) · 200 | **MISSED** |
+| 5r. Bad input — one `creator_id` per case | 9/9 codes, 0 × 200/500, 9 rejected, 0 decided, 10,000 chars → 200 | 9/9 · 9 logged · 0 decided · 200 | 9/9 · 9 logged · 0 decided · 200 | 9/9 · 9 logged · 0 decided · 200 | **MET** |
+
+Four scores moved, and no guess. Two Gutenberg passages went 0.477 → 0.454
+and 0.440 → 0.424, my #4 (a criterion 3 human input) went 0.380 → 0.362, and the boundary
+text went 0.361 → 0.353. Their curly quotes and apostrophes now count. That
+moved criterion 2's gap from 0.172 to 0.180.
+
+**Probes** (`results/probes_after3.md`):
+
+- A 100-word Arabic essay → `200`, *unsure* 0.70.
+- The MF07 text ×6 (102 words), which got `422` before → `200`, *unsure* 0.75.
+- PI02 → *unsure* 0.477 with `"text_modified": true, "chars_removed": 122` in
+  the response.
+
+**Did it help, and what it cost:** The non-Latin fix removes a wrong refusal.
+A writer in another script is no longer told their 100-word essay is "too
+short". It's still not a fair judgment, though: gpt2 and my anchors were
+built on English, so their scores (0.70 and 0.75) mean little. At least they
+land in *unsure*, whose label says so, rather than in a confident band. The
+visibility change costs a little against attackers, since they now learn
+which phrasings get caught. The probe showed they could reword past the
+filter anyway.
+
+---
+
 ## What's Still Broken
 
 Measured against the final system, after both changes
@@ -1532,7 +1648,7 @@ Measured against the final system, after both changes
 
 | Attack | What still happens | What I'd do | Why I stopped |
 |---|---|---|---|
-| **EV02** — broken-up sentences | AI text → human 0.31. Model is 0.594, 0.006 under the agreement floor, so my first fix just misses it. | Score sentence-length spread on sentences of 3+ words, so a row of one-word "Really." fragments can't fake variety. | It's a change to signal two, and signals were frozen once the two improvements were chosen. Lowering the floor to 0.55 instead would also cost my #5 and criterion 3's human #1 their human labels (simulated). |
+| **EV02** — broken-up sentences | AI text → human 0.31. Model is 0.594, 0.006 under the agreement floor, so my first fix just misses it. | Score sentence-length spread on sentences of 3+ words, so a row of one-word "Really." fragments can't fake variety. | It's a change to signal two, and signals were frozen once the two improvements were chosen. Lowering the floor to 0.55 instead would also cost my #5 and my #4 (a criterion 3 human input) their human labels (simulated). |
 | **EV05** — heavy human editing | AI text → human 0.23 after a full human rewrite. | Nothing in the detector. The words really are a person's now, and catching this means flagging human writers. A site that cares should ask for drafts or edit history. | It's the honest limit of reading only the final text. |
 | **RQ10, RQ11** — malformed body, no `creator_id` | `429` instead of `400`, because the shared address bucket was already full of other malformed rows. | Validate before limiting. Either check the body in a `before_request` hook and refuse it before Flask-Limiter counts it, or count only requests that pass validation (`deduct_when`). Keep a separate, looser address-level limit for junk. | It was the third candidate improvement. I took the two that protect writers from wrong labels over the one that fixes an error message. |
 
@@ -1551,8 +1667,9 @@ Measured against the final system, after both changes
   near zero and keep it only as an agreement veto. That needs its own measured
   run, and it moves the false-positive side, so it's the next improvement, not
   a side change.
-- **MF07 (latent):** `stylometry.words` only counts ASCII, so any non-Latin
-  essay is refused as "too short" (probed: 102 Arabic words → 422). The fix is
+- **MF07 (latent; fixed after feedback, see Post-feedback):** `stylometry.words`
+  only counts ASCII, so any non-Latin essay is refused as "too short" (probed:
+  102 Arabic words → 422). The fix is
   a Unicode word pattern (`\w+`). I left it alone because it's a signal-code
   change and no criterion covered it.
 - **`/verify` doesn't strip instructions,** and **`/appeal` accepts duplicates
@@ -1609,6 +1726,533 @@ almost never hear that their work looks like a person's.
 
      Do not delete and recreate this repository.
      ═════════════════════════════════════════════════════════════════════ -->
+
+---
+
+## Capstone
+
+*Unit 9. Every section this unit asks for is under this heading. Everything
+above it is units 7 and 8.*
+
+**What This Extends**
+
+Provenance Guard, the project 4 service from units 7 and 8. `POST /submit`
+scores a piece of writing with three local signals (gpt2 predictability, style,
+stock phrases) and labels it human, unsure or AI. Until now it has only ever run
+as `python app.py`, which is Flask's development server. Its only log was the
+decision log (`logs/audit.jsonl`), which records what was decided, but not what
+came in or how long it took. A request that crashed left no line at all.
+
+New this unit:
+
+- **A run path that isn't the editor:** `gunicorn` with a committed config
+  (`gunicorn.conf.py`) and one start command.
+- **A structured request log,** `logs/requests.jsonl`. It writes one record per
+  HTTP request, including rejected and crashed ones. Each record carries the
+  timestamp, request id, route, a summary of what came in and what went out,
+  the status, duration, CPU time and memory. `/submit` records also time each
+  stage.
+- **Failures answered in JSON and logged:** a model that can't load returns
+  `503 detector_unavailable`, and anything else returns `500 internal_error`.
+- **A measured cost per run.**
+
+**The Shape**
+
+**A — Deploy and instrument.** The extension is the operational layer around a
+service that already works: the run path, the request log, and the numbers that
+come out of it (latency, CPU-seconds, memory). The scoring itself is untouched.
+It runs locally (Path B). gpt2 and torch need more than the course's 512 MB free
+tier, as RUNNING.md works out, so a hosted copy is a stretch item on a host with
+enough memory.
+
+Out of scope, on purpose:
+
+- **No change to the signals, weights, thresholds or labels.** That keeps unit
+  8's results comparable, and it means a latency or cost number measures the
+  same pipeline before and after the improvement.
+- **No fixes to unit 8's leftovers:** validating before rate limiting
+  (RQ10/RQ11), `type_token_ratio` running backwards, the dated marker list.
+  Those belong to shapes B and C.
+- **No scaling out and no log infrastructure.** It runs one worker: a second
+  worker would load a second copy of gpt2 and split the in-memory rate limiter's
+  counts in two. There's no log database, rotation or dashboard either. The log
+  is a file you read back.
+
+**Stretch (declared before building)**
+
+1. **Latency breakdown.** Every `/submit` record carries `stages_ms`: validate,
+   model load, model, style, markers, combine, verified-writer lookup and audit
+   write. It's built with Milestone 3's logging, and the numbers and the
+   dominant stage go under *What It Costs*.
+2. **Load observation.** The service at ten times the normal rate the criteria
+   are run at, with latency, error rate and CPU per run reported beside the
+   normal-rate numbers.
+3. **Both run paths.** The same service hosted on a free Hugging Face Space
+   (Docker) as well as run locally, with a note on what differed.
+4. **A second measured improvement,** drawn from the diagnosis, with a third
+   run log in the same format.
+
+**Running It**
+
+Path B, local with logs. After a one-time setup, it's one command, and
+[RUNNING.md → The run path](RUNNING.md) has the whole thing:
+
+```bash
+gunicorn -c gunicorn.conf.py app:app
+```
+
+You need Python 3.11–3.13 (tested on 3.13.2), the exact pins in
+`requirements.lock.txt`, and gpt2 (a 548 MB model file, 525 MB in the cache),
+which `python detector.py` downloads once. Expect about 1.3 GB of memory once
+it's warm.
+
+*Tested from a clean clone:* a `git clone` of this repo into a new folder, a
+fresh venv, `pip install -r requirements.lock.txt` (44 s), then the start
+command. `/health` answered and RUNNING.md's `curl` got a `200`. It hit two
+things a reader would hit, both now in RUNNING.md. First, on macOS AirPlay
+holds port 5000, so `localhost:5000` can answer `403 AirTunes`; use
+`127.0.0.1`. Second, `python test.py` falsely warns that the model is missing
+when the Hugging Face cache has been moved. Two gaps, honestly: the clone
+shared this machine's model cache, so the 548 MB download wasn't re-tested;
+and `requirements.lock.txt` plus the new RUNNING.md section were copied into
+the clone, because they weren't committed yet. The session below ran from the
+same command on `PORT=5001`, since AirPlay holds 5000 on this Mac.
+
+**Instrumentation**
+
+Every HTTP request writes one JSON line to `logs/requests.jsonl`. The writer is
+`app.py::_log_request`, an `after_request` hook that calls
+`audit.py::log_request`. It's registered before the rate limiter, so 429s get a
+record too, and so do refusals, 404s and crashes, which
+`app.py::internal_error` and `app.py::detector_unavailable` turn into JSON
+`500` and `503` responses first. The response's `X-Request-Id` header carries
+the record's id, so a client can find its own line, and
+`GET /log?log=requests&limit=N` reads the log back over HTTP.
+
+| Field | What it holds |
+|---|---|
+| `timestamp` | UTC, to the millisecond |
+| `request_id` | 12 hex characters, also sent back as the `X-Request-Id` header |
+| `method`, `route` | The route as its template (`/content/<content_id>`), so records group |
+| `status` | The HTTP status the client got |
+| `duration_ms` | Wall time from the first `before_request` hook to `after_request` |
+| `cpu_ms` | Process CPU time over the same span. It counts all of torch's threads, so it can exceed `duration_ms`. It belongs to one request because the one sync worker serves one at a time |
+| `max_rss_mb` | The worker's peak resident memory so far |
+| `input` | What came in: `creator_id` / `content_id`, `chars`, `words`, the first 60 characters and a sha256 fingerprint, but never the whole text. Query args for a GET; `{"bytes", "json_object": false}` for a body that isn't a JSON object |
+| `output` | What went out: the response size, plus `guess`, `confidence`, `content_id`, `status` or `error` from small JSON bodies |
+| `stages_ms` | `/submit` and `/verify` only: time per stage (the latency breakdown) |
+| `error` | `{type, message}` for a 500 or 503, otherwise `null` |
+| `pid` | The worker process. It changes if gunicorn restarts the worker |
+
+Fourteen entries from one real session on 2026-11-18, copied from
+`logs/requests.jsonl`. Seven are failures: `400` refused, `422` too short,
+`413` too long, `500` crash, `429` rate limited, `404` unknown route, and `503`
+model unavailable. The `503` is from a second start with `HF_HUB_OFFLINE=1
+AI201_DETECTOR_MODEL=distilgpt2`, which means a model that was never
+downloaded and no network to fetch it.
+
+```json
+{"timestamp": "2026-11-18T16:09:24.954+00:00", "request_id": "0b273e2c8ff2", "method": "POST", "route": "/ping", "status": 200, "duration_ms": 0.25, "cpu_ms": 0.26, "max_rss_mb": 35.0, "input": {}, "output": {"bytes": 60, "ok": true}, "stages_ms": null, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:24.973+00:00", "request_id": "6fc99e2ca3c4", "method": "GET", "route": "/health", "status": 200, "duration_ms": 6.69, "cpu_ms": 6.7, "max_rss_mb": 35.0, "input": {}, "output": {"bytes": 100, "ok": true, "detector_loaded": false}, "stages_ms": null, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:30.660+00:00", "request_id": "ccfd76bb0236", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 5674.05, "cpu_ms": 3470.52, "max_rss_mb": 848.0, "input": {"creator_id": "session_writer", "chars": 170, "words": 32, "preview": "I walked to the market this morning because the bus was late", "sha256": "964596cbb966"}, "output": {"bytes": 502, "content_id": "e2d32694-f337-4e61-9ae4-8702d43527b0", "guess": "unsure", "confidence": 0.4, "status": "decided"}, "stages_ms": {"validate": 0.23, "model_load": 4408.97, "model": 1256.9, "style": 0.15, "markers": 0.04, "combine": 0.01, "verified_lookup": 6.82, "audit_write": 0.21}, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:31.035+00:00", "request_id": "ec3af1bf38ca", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 164.18, "cpu_ms": 270.73, "max_rss_mb": 967.1, "input": {"creator_id": "measure_cost_0", "chars": 1140, "words": 178, "preview": "The GuiController represents the class that acts as a contro", "sha256": "73dc0bb45c49"}, "output": {"bytes": 324, "content_id": "443f8847-07f8-4316-a6c1-34e7d700d461", "guess": "human", "confidence": 0.3277, "status": "decided"}, "stages_ms": {"validate": 0.46, "model_load": 0.0, "model": 154.5, "style": 0.7, "markers": 0.23, "combine": 0.0, "verified_lookup": 7.16, "audit_write": 0.47}, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:44.755+00:00", "request_id": "3f2ce5674aba", "method": "POST", "route": "/submit", "status": 400, "duration_ms": 0.79, "cpu_ms": 0.8, "max_rss_mb": 1255.6, "input": {"creator_id": "session_bad_1"}, "output": {"bytes": 71, "error": "invalid_input"}, "stages_ms": {"validate": 0.02}, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:44.783+00:00", "request_id": "956e5c0a3094", "method": "POST", "route": "/submit", "status": 422, "duration_ms": 0.58, "cpu_ms": 0.59, "max_rss_mb": 1255.6, "input": {"creator_id": "session_bad_2", "chars": 8, "words": 2, "preview": "Hi there", "sha256": "8328c36d18b7"}, "output": {"bytes": 73, "error": "too_short"}, "stages_ms": {"validate": 0.03}, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:44.833+00:00", "request_id": "78c25a9b6a4c", "method": "POST", "route": "/submit", "status": 413, "duration_ms": 0.62, "cpu_ms": 0.63, "max_rss_mb": 1255.6, "input": {"creator_id": "session_bad_3", "chars": 10001, "words": 1, "preview": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sha256": "0cab99a05860"}, "output": {"bytes": 65, "error": "too_long"}, "stages_ms": {"validate": 0.01}, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:44.853+00:00", "request_id": "e7278ea1ff85", "method": "POST", "route": "/submit", "status": 500, "duration_ms": 6.22, "cpu_ms": 5.14, "max_rss_mb": 1255.6, "input": {"creator_id": "session_surrogate", "chars": 166, "words": 35, "preview": "I wrote this on my phone and something odd got pasted in the", "sha256": "ca29d14ec197"}, "output": {"bytes": 121, "error": "internal_error"}, "stages_ms": {"validate": 0.11, "model_load": 0.0, "model": 0.08}, "error": {"type": "TypeError", "message": "TextEncodeInput must be Union[TextInputSequence, Tuple[InputSequence, InputSequence]]"}, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:45.200+00:00", "request_id": "5db821ae1daf", "method": "POST", "route": "/submit", "status": 429, "duration_ms": 0.62, "cpu_ms": 0.63, "max_rss_mb": 1255.6, "input": {"creator_id": "session_flood", "chars": 170, "words": 32, "preview": "I walked to the market this morning because the bus was late", "sha256": "964596cbb966"}, "output": {"bytes": 103, "error": "rate_limited"}, "stages_ms": null, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:09:45.211+00:00", "request_id": "f3b299acca12", "method": "GET", "route": "/nope", "status": 404, "duration_ms": 0.17, "cpu_ms": 0.17, "max_rss_mb": 1255.6, "input": {}, "output": {"bytes": 207}, "stages_ms": null, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:11:08.801+00:00", "request_id": "c02767cfd06f", "method": "POST", "route": "/submit", "status": 503, "duration_ms": 3645.11, "cpu_ms": 2909.78, "max_rss_mb": 303.7, "input": {"creator_id": "session_nomodel", "chars": 170, "words": 32, "preview": "I walked to the market this morning because the bus was late", "sha256": "964596cbb966"}, "output": {"bytes": 134, "error": "detector_unavailable"}, "stages_ms": {"validate": 0.23, "model_load": 3644.2}, "error": {"type": "DetectorUnavailable", "message": "Couldn't load 'distilgpt2': We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'.\nThe first r"}, "pid": 52519}
+{"timestamp": "2026-11-18T16:11:22.088+00:00", "request_id": "5b1593e6284d", "method": "POST", "route": "/appeal", "status": 200, "duration_ms": 7.25, "cpu_ms": 7.25, "max_rss_mb": 1255.6, "input": {"content_id": "01e11fc8-188f-4f45-88b0-261f8e27ad02"}, "output": {"bytes": 203, "content_id": "01e11fc8-188f-4f45-88b0-261f8e27ad02", "status": "under_review"}, "stages_ms": null, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:11:22.115+00:00", "request_id": "08cf154c82a1", "method": "GET", "route": "/content/<content_id>", "status": 200, "duration_ms": 13.27, "cpu_ms": 13.28, "max_rss_mb": 1255.6, "input": {}, "output": {"bytes": 631, "content_id": "01e11fc8-188f-4f45-88b0-261f8e27ad02", "guess": "unsure", "confidence": 0.4, "status": "under_review"}, "stages_ms": null, "error": null, "pid": 51967}
+{"timestamp": "2026-11-18T16:11:22.129+00:00", "request_id": "b847bbbcc9c3", "method": "GET", "route": "/log", "status": 200, "duration_ms": 1.07, "cpu_ms": 1.07, "max_rss_mb": 1255.6, "input": {"log": "requests", "limit": "3"}, "output": {"bytes": 1413, "count": 3}, "stages_ms": null, "error": null, "pid": 51967}
+```
+
+What the failures show:
+
+- **The `500` is a real bug the old log couldn't have shown.** A text with a
+  lone surrogate (`\ud800`, which JSON allows) passes validation, then gpt2's
+  tokenizer rejects it with a `TypeError` in the `model` stage. Before this
+  unit, that was an HTML 500 page and no log line at all.
+- **The first `503` took 3.6 s**, all of it in `model_load`: torch and
+  transformers imported, and then the load failed. The second took 1.2 ms.
+  Nothing remembers the failure, so every request tries the load again.
+- **`/health` said `"ok": true` all through the `503` session.** That's the
+  same answer a healthy cold start gets, because it reports whether the model
+  *is* loaded, not whether it *can* be.
+
+**What It Costs**
+
+There's no API spend: the model runs on this machine, so a run costs compute
+and memory. I measured it with `python measure.py --n 10 --label cost`: ten
+`POST /submit`s, one at a time, of my own paragraphs (116–289 words), sent
+after a warm-up request. Each request's server-side numbers come from its own
+request-log record, matched by `X-Request-Id`. The raw output is in
+`results/measure_2026-11-18_1109_cost.md`.
+
+| Per run (warm) | Mean of 10 | Range |
+|---|---|---|
+| CPU time (`cpu_ms`) | **0.263 CPU-seconds** | 0.148–0.413 |
+| Server time (`duration_ms`) | 144.8 ms | 95.2–204.7 |
+| Client round trip | 147.8 ms | 97.3–207.5 |
+
+- **Once per process start**, the first `/submit` costs 5.67 s and 3.47
+  CPU-seconds (record `ccfd76bb0236` above). 4.41 s of that is loading gpt2,
+  and 1.26 s is the first forward pass.
+- **Memory:** peak RSS was 1,256 MB after the ten runs, against 848 MB just
+  after the cold start and 35 MB before the model loads. Memory, not CPU,
+  decides the host. This is over a 1 GB instance, not just the 512 MB free
+  tier.
+- **CPU time is 1.8× the wall time,** because torch spreads one forward pass
+  across several cores. So the per-run figure to quote is CPU-seconds, not
+  wall seconds.
+
+*Latency breakdown (stretch 1).* The mean of the same ten warm runs:
+
+| Stage | Mean ms | Share of 144.8 ms |
+|---|---|---|
+| `model`: gpt2 tokenise and forward pass | 135.89 | 93.9% |
+| `verified_lookup`: `_is_verified` reads the whole audit log | 6.68 | 4.6% |
+| `style` | 0.75 | 0.5% |
+| `validate`, including `sanitize` | 0.47 | 0.3% |
+| `markers` | 0.26 | 0.2% |
+| `audit_write` | 0.23 | 0.2% |
+| `model_load` (warm) | 0.00 | 0.0% |
+| `combine` | 0.00 | 0.0% |
+| Outside any stage (Flask, JSON) | 0.51 | 0.4% |
+
+The model dominates: it's 94% of a warm run and nearly all of a cold one. The
+only other stage worth a number is `verified_lookup`. To answer one yes/no
+question about one writer, it reads and parses the entire audit log on every
+submission (about 1,750 lines, 0.6 MB at the time), so its cost tracks the
+size of the log, not the size of the request.
+
+*A hundred people a day.* Assume each person submits 3 pieces (a draft, a
+fix, a final), so 300 runs a day.
+
+- **Compute:** 300 × 0.263 CPU-s = 78.9 CPU-s. Add one cold start a day (3.47
+  CPU-s) and it's **82.4 CPU-s a day**. That's 0.1% of one CPU's 86,400
+  seconds.
+- **Host:** the 1.3 GB peak needs a 2 GB instance. Render's Standard (2 GB,
+  1 CPU) is **$25 a month**, which is $25 ÷ 30 = **$0.83 a day**, or
+  $0.83 ÷ 300 = **$0.0028 per run**.
+- **The CPU's share of that:** at Render's per-minute rate for the same plan
+  ($0.00058/min, or $0.0000097 per CPU-second), 82.4 CPU-s is $0.0008 a day,
+  under 0.1% of the bill.
+
+So the cost isn't the scoring. It's keeping a 1.3 GB model in memory all day.
+Ten times the users (3,000 runs, 824 CPU-s, about 1% of the CPU) would cost the
+same $25. (Render's price is from its pricing page, checked 2026-11-18; the
+per-run figures are measured.)
+
+**Run Log and Verdicts**
+
+Criteria are in `criteria.md` → *Capstone criteria*. `run_capstone.py` runs
+C2–C5 three times, and every trial starts its own fresh gunicorn. With `--c1`
+it runs C1: three fresh clones, each with empty caches. Raw output for the
+before-fix run is in `results/capstone_2026-11-18_1836_before.md` (C2–C5) and
+`results/capstone_2026-11-18_1843_before_c1.md` (C1), with each trial's server
+output in the folder of the same name. A one-trial shakedown of the harness
+(`…_shakedown`) ran first and isn't counted. An earlier shakedown went to
+another program on port 5001, so it measured nothing and was deleted.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| C1. A fresh clone runs from RUNNING.md alone | 0 extra steps · `decided` · 1 log line at 200 | 0 · decided · 1 line | 0 · decided · 1 line | 0 · decided · 1 line | **MET** |
+| C2. Every request leaves one correct record | 26/26, log +26, 0 write failures | 25/26 · +25 · 1 | 25/26 · +25 · 1 | 25/26 · +25 · 1 | **MISSED** |
+| C3. Failures are JSON, decide nothing, recover | 5/5 503 · recovers · 3/3 500 · 2 decided · 1 pid · timing | all pass (first 503 2.80 s) | all pass (2.83 s) | all pass (3.67 s) | **MET** |
+| C4. Cold ≤ 10 s, warm ≤ 500 ms | cold 1/1, warm 25/25 | 3.62 s · 25/25 (max 314 ms) | 3.77 s · 25/25 (max 243 ms) | 4.30 s · 25/25 (max 256 ms) | **MET** |
+| C5. Warm ≤ 0.5 CPU-s, peak ≤ 1,536 MB | 25/25, peak ≤ 1,536 | 20/25 (max 585) · 1,268 MB | 25/25 (max 489) · 1,307 MB | 23/25 (max 506) · 1,214 MB | **MISSED** |
+
+*Real output, run 1.*
+
+**C1**, from `run_capstone.py::c1`. It runs RUNNING.md's own code blocks in
+a new folder, changing only the clone URL and the port. The transcript is
+`capstone_2026-11-18_1843_before_c1/c1_t1_terminal.txt`: every wheel and the
+model downloaded again, `# setup exit 0`, and no other command. The curl's body
+began `{"chars_removed":0,"confidence":0.4,"content_id":"d0c9e47e-0281-4735-8e06-d35b98580c47",…,"status":"decided"`,
+and this is its one line in the clone's `logs/requests.jsonl`:
+
+```json
+{"timestamp": "2026-11-18T23:44:54.479+00:00", "request_id": "5140cc05f771", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 4265.47, "cpu_ms": 3415.09, "max_rss_mb": 873.4, "input": {"creator_id": "me", "chars": 170, "words": 32, "preview": "I walked to the market this morning because the bus was late", "sha256": "964596cbb966"}, "output": {"bytes": 490, "content_id": "d0c9e47e-0281-4735-8e06-d35b98580c47", "guess": "unsure", "confidence": 0.4, "status": "decided"}, "stages_ms": {"validate": 0.26, "model_load": 4178.95, "model": 78.32, "style": 0.14, "markers": 0.04, "combine": 0.0, "verified_lookup": 6.81, "audit_write": 0.24}, "error": null, "pid": 81399}
+```
+
+*A discarded C1 run:* the first attempt
+(`…_1838_before_c1_DISCARDED_stray_server`) met trial 1. Trials 2 and 3 then
+got `decided` but had 0 lines in their own clone's log, because trial 1's
+gunicorn had outlived its `bash` wrapper and answered their curls ("Connection
+in use" in `c1_t2_server.txt`). That's exactly what the `content_id` check is
+there to catch. It was a harness bug (fixed with `exec`), not a RUNNING.md
+miss, so the run was rerun in full.
+
+**C2**, from `run_capstone.py::c2` and `c2_check`. 25 rows pass, and #26
+(JSON nested 100,000 deep) has no record:
+
+```json
+{"#": 26, "request": "POST /submit", "status": 500, "client_ms": 8.24, "rid": "c0d8f586b6f1", "fails": ["0 records"]}
+```
+
+Its only trace is in the server output
+(`capstone_2026-11-18_1836_before/c2_t1_server.txt`), printed by
+`app.py::_log_request`:
+
+```
+request log write failed: RecursionError('maximum recursion depth exceeded while decoding a JSON array from a unicode string')
+```
+
+A passing row's record, the 429 (`logs/requests.jsonl`):
+
+```json
+{"timestamp": "2026-11-18T23:36:59.961+00:00", "request_id": "55143c2161ec", "method": "POST", "route": "/submit", "status": 429, "duration_ms": 0.91, "cpu_ms": 0.86, "max_rss_mb": 1149.8, "input": {"creator_id": "c2_t1_flood", "chars": 1941, "words": 278, "preview": "Additionally, I had the opportunity to collaborate with the ", "sha256": "0b0ffa256bff"}, "output": {"bytes": 103, "error": "rate_limited"}, "stages_ms": null, "error": null, "pid": 79169}
+```
+
+**C3**, from `run_capstone.py::c3`. The first 503, and the 200 after the
+model folder was renamed back with no restart (same `pid`, and `model_load`
+308 ms):
+
+```json
+{"timestamp": "2026-11-18T23:37:03.947+00:00", "request_id": "ed67e878bf15", "method": "POST", "route": "/submit", "status": 503, "duration_ms": 2801.2, "cpu_ms": 2784.01, "max_rss_mb": 304.2, "input": {"creator_id": "c3_t1_1", "chars": 1140, "words": 178, "preview": "The GuiController represents the class that acts as a contro", "sha256": "73dc0bb45c49"}, "output": {"bytes": 134, "error": "detector_unavailable"}, "stages_ms": {"validate": 0.63, "model_load": 2799.92}, "error": {"type": "DetectorUnavailable", "message": "Couldn't load 'gpt2': We couldn't connect to 'https://huggingface.co' to load the files, a…"}, "pid": 79215}
+{"timestamp": "2026-11-18T23:37:05.668+00:00", "request_id": "262ef1aab3f8", "method": "POST", "route": "/submit", "status": 200, "duration_ms": 1704.48, "cpu_ms": 1237.27, "max_rss_mb": 936.9, "input": {"creator_id": "c3_t1_7", "chars": 1941, "words": 278, "preview": "Additionally, I had the opportunity to collaborate with the ", "sha256": "0b0ffa256bff"}, "output": {"bytes": 501, "content_id": "74e418e5-e895-4456-bb8f-61014abe71d3", "guess": "unsure", "confidence": 0.6458, "status": "decided"}, "stages_ms": {"validate": 0.67, "model_load": 308.5, "model": 1384.93, "style": 1.3, "markers": 0.35, "combine": 0.01, "verified_lookup": 7.6, "audit_write": 0.42}, "error": null, "pid": 79215}
+```
+
+A surrogate 500 (from C2's run, same handler, message trimmed):
+
+```json
+{"request_id": "18dc1c8aee00", "route": "/submit", "status": 500, "duration_ms": 7.69, "output": {"bytes": 121, "error": "internal_error"}, "stages_ms": {"validate": 0.44, "model_load": 0.0, "model": 0.08}, "error": {"type": "TypeError", "message": "TextEncodeInput must be Union[TextInputSequence, Tuple[InputSequence, InputSequence]]"}, "pid": 79169}
+```
+
+**C4 and C5**, from `run_capstone.py::c45` (with `measure.py::main` for the
+20 `MY_WRITING` runs). These are the round trips (ms) and `cpu_ms` of run 1's
+five 10,000-character warm requests, the last five of the 25:
+
+```
+wall ms: 256.9  314.35  272.17  253.76  241.22
+cpu ms:  500.6  584.64  518.01  517.63  497.67
+```
+
+Four of those are over 500. Run 1's fifth miss was a `MY_WRITING` run
+(278 words): 255.93 ms wall, 502.13 cpu ms.
+
+*Diagnosis.*
+
+- **C2 missed. The stage is the request-log hook, `app.py::_log_request`. The
+  mechanism is one `try` around the whole record.** The body nested 100,000
+  deep makes Python's JSON decoder raise `RecursionError`, not `ValueError`,
+  and `request.get_json(silent=True)` only swallows `ValueError`. The rate
+  limiter's key function parsed the body first, raised, and
+  `app.py::internal_error` answered 500. Then `_input_summary` parsed it again
+  (a failed parse isn't cached) and raised again, inside the one `try` that
+  wraps building *and* writing the record. So one field that couldn't be built
+  cost the whole line. The other 25 rows passed every check in all three
+  trials, including the 250,000-character body (#15) on the duration check.
+- **C5 missed. The stage is the model, the gpt2 forward pass in
+  `detector.py::perplexity`. The mechanism is that `cpu_ms` counts every torch
+  thread.** Seven of the eight misses were the 10,000-character text, which is
+  always cut to the 400-token cap. The eighth was a 278-word text near the cap.
+  At 400 tokens the pass takes about 250 ms of wall time, but torch runs it on
+  4 intra-op threads, so it burns about twice that in CPU. Peak memory was fine
+  (at most 1,307 MB). A probe outside the server
+  (`results/probe_torch_threads_before.md`, `detector.perplexity` on the
+  400-token text) measured the trade directly. At 4 threads it's 203 ms wall
+  and 431 ms CPU. At 2 threads it's 218 ms wall and 370 ms CPU, with an
+  identical score. Above two threads, the extra threads cost more CPU than they
+  save in wall time.
+- **No shared stage.** The two misses come from different parts of the
+  system: the log hook, and the model's threading. They're two problems, not
+  one with two symptoms. C1, C3 and C4 were met in every trial.
+
+**The Improvement**
+
+*What changed:* `app.py::_log_request` now builds the record's cheap fields
+first. Each summary (`input`, `output`) is built in its own `try`, and one that
+fails becomes `{"log_error": "<the exception>"}` in that field, so the record
+is still written. The outer `try` now guards only the file write. There's a
+new test, `test_a_body_too_deep_to_parse_still_gets_its_record`, and 41 of 41
+tests pass. It's aimed at the C2 diagnosis: a summary that can't be built
+should cost that field, not the record.
+
+*Run log after* (`results/capstone_2026-11-18_1851_after.md`,
+`results/capstone_2026-11-18_1854_after_c1.md`; C1 cloned the fix's commit
+`682ba97`):
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| C1. A fresh clone runs from RUNNING.md alone | 0 extra steps · `decided` · 1 log line at 200 | 0 · decided · 1 line | 0 · decided · 1 line | 0 · decided · 1 line | **MET** |
+| C2. Every request leaves one correct record | 26/26, log +26, 0 write failures | 26/26 · +26 · 0 | 26/26 · +26 · 0 | 26/26 · +26 · 0 | **MET** |
+| C3. Failures are JSON, decide nothing, recover | 5/5 503 · recovers · 3/3 500 · 2 decided · 1 pid · timing | all pass (first 503 2.97 s) | all pass (2.69 s) | all pass (3.11 s) | **MET** |
+| C4. Cold ≤ 10 s, warm ≤ 500 ms | cold 1/1, warm 25/25 | 3.56 s · 25/25 (max 222 ms) | 3.61 s · 25/25 (max 258 ms) | 3.70 s · 25/25 (max 221 ms) | **MET** |
+| C5. Warm ≤ 0.5 CPU-s, peak ≤ 1,536 MB | 25/25, peak ≤ 1,536 | 25/25 (max 452) · 1,307 MB | 23/25 (max 531) · 1,305 MB | 25/25 (max 460) · 1,224 MB | **MISSED** |
+
+#26's record now exists (`logs/requests.jsonl`):
+
+```json
+{"timestamp": "2026-11-18T23:52:05.571+00:00", "request_id": "181ada86ece0", "method": "POST", "route": "/submit", "status": 500, "duration_ms": 4.58, "cpu_ms": 3.71, "max_rss_mb": 1118.8, "input": {"log_error": "RecursionError('maximum recursion depth exceeded while decoding a JSON array from a unicode string')"}, "output": {"bytes": 121, "error": "internal_error"}, "stages_ms": null, "error": {"type": "RecursionError", "message": "maximum recursion depth exceeded while decoding a JSON array from a unicode string"}, "pid": 84321}
+```
+
+*Did it help?* Yes, for C2: it went from 25/26 to 26/26 in every trial, the
+log grew by exactly 26, and there were 0 `request log write failed` lines. The
+other four didn't move, and C5 wasn't expected to, since this change doesn't
+touch the model. C5 met two trials this time and missed one (two 10,000-
+character runs at 531 and 503 CPU-ms), which is the same spread as before: 20,
+25 and 23 out of 25 then, against 25, 23 and 25 now.
+
+*What it cost elsewhere:* nothing measurable in time. #26's round trip was
+6.74 ms after, against 8.24 ms before, and C4's warm maximum stayed between
+220 and 260 ms. But it changes what a reader of the log can rely on.
+`input` can now be `{"log_error": …}` instead of the summary, so anything that
+reads `input.creator_id` has to allow for it. And it doesn't fix the status:
+#26 is still a `500`, because the limiter's key function crashes before the
+route can refuse it. A malformed body should be a `400`, and that's shape B's
+fix, written up under *What's Still Broken*.
+
+**Second Improvement (stretch 4)**
+
+*What changed:* torch now runs one forward pass on 2 intra-op threads instead
+of its default 4 (`config.py::TORCH_THREADS`, applied in
+`detector.py::_load`). It's aimed at the C5 diagnosis: on the 400-token text,
+the probe measured 431 CPU-ms at 4 threads against 370 at 2, for 15 ms more
+wall time and an identical score.
+
+*Third run log* (`results/capstone_2026-11-18_2035_after2.md`; `results/capstone_2026-11-18_2056_after2_c1.md`, cloning commit `2e4f882`).
+⚠️ **This one was taken under load.** Zoom, Discord and Google Drive were
+running, and the load average was 11.9 at the end, while the first two run
+logs had a quieter machine. I couldn't close them at the time, so it's
+reported as is.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| C1. A fresh clone runs from RUNNING.md alone | 0 extra steps · `decided` · 1 log line at 200 | 0 · decided · 1 line | 0 · decided · 1 line | 0 · decided · 1 line | **MET** |
+| C2. Every request leaves one correct record | 26/26, log +26, 0 write failures | 26/26 · +26 · 0 | 26/26 · +26 · 0 | 26/26 · +26 · 0 | **MET** |
+| C3. Failures are JSON, decide nothing, recover | 5/5 503 · recovers · 3/3 500 · 2 decided · 1 pid · timing | all pass (first 503 1.55 s) | all pass (3.43 s) | all pass (3.87 s) | **MET** |
+| C4. Cold ≤ 10 s, warm ≤ 500 ms | cold 1/1, warm 25/25 | 2.41 s · 25/25 (max 335 ms) | 5.34 s · 25/25 (max 331 ms) | 5.31 s · 25/25 (max 453 ms) | **MET** |
+| C5. Warm ≤ 0.5 CPU-s, peak ≤ 1,536 MB | 25/25, peak ≤ 1,536 | 25/25 (max 435) · 1,210 MB | 24/25 (max 505) · 1,191 MB | 20/25 (max 589) · 1,066 MB | **MISSED** |
+
+The medians for the 10,000-character warm runs, across the three run logs:
+
+| Run log | Wall ms, runs 1 / 2 / 3 | CPU ms, runs 1 / 2 / 3 | CPU ÷ wall |
+|---|---|---|---|
+| Before (4 threads) | 257 / 220 / 219 | 518 / 455 / 435 | 2.0 |
+| After change 1 (4 threads) | 218 / 229 / 213 | 441 / 466 / 433 | 2.0 |
+| After change 2 (2 threads, under load) | 218 / 292 / 366 | **360** / 463 / 574 | **1.6** |
+
+*Did it help?* Partly, and the load stops me saying how much. Run 1 is the
+probe's prediction made real: a 360 ms CPU median on the long text, down from
+433–518, with 25/25 under 500. Runs 2 and 3 slowed down as the background load
+rose, in wall time (218 → 366 ms) and CPU alike, because a contended core does
+less work per second. One thing did hold in all three runs: CPU per
+millisecond of wall time fell from 2.0 to 1.6. That's the mechanism the change
+targets, the extra threads' overhead. C5 is still **MISSED**, but this run
+can't say whether the change would meet it on a quiet machine.
+
+*What it cost elsewhere:* run 1 shows the wall time the probe predicted (a
+218 ms median, the same as before). Under load it's worse, because with 2
+threads a busy machine has fewer threads to fall back on. C4 still held, but
+its warm maximum rose to 453 ms, the closest any run has come to 500.
+
+*To re-check:* re-run `python run_capstone.py --label after2_quiet` with the
+same apps open as the first two run logs had, and compare it with this table.
+
+**Load Observation (stretch 2)**
+
+*Normal rate*, as the criteria run it: one client, one request at a time.
+*Ten times* that: 10 clients at once. Each ran 100 `/submit`s of `MY_WRITING`
+through `python measure.py --n 100 --concurrency 1` and then `--concurrency 10`,
+back to back on one fresh server (`gunicorn -c gunicorn.conf.py app:app`,
+2-thread build), after one warm-up request. The background load was the same
+for both (load average about 5.5). Raw output:
+`results/measure_2026-11-18_2109_load_c1.md` and `…_load_c10.md`.
+
+| 100 × `/submit` | Normal (1 at a time) | 10× (10 at once) | Change |
+|---|---|---|---|
+| Throughput | 10.3 /s | 10.4 /s | none |
+| Errors | 0 / 100 | 0 / 100 | none |
+| Logged | 100 / 100 | 100 / 100 | none |
+| Client round trip, mean · p95 · max | 97 · 127 · 154 ms | **920 · 1,005 · 1,026 ms** | ×9.5 |
+| Log's `duration_ms`, mean · p95 | 96 · 125 ms | 95 · 125 ms | none |
+| CPU per run (`cpu_ms` mean) | 149 ms | 149 ms | none |
+| Peak memory | 1,102 MB | 1,102 MB | none |
+
+*What changed:* only the waiting. The one sync worker serves about 10 requests
+a second however many clients are sending, so at 10× each request queues
+behind about nine others. Nothing failed, nothing went unlogged, and a run cost
+the same CPU and memory. But every request's wait went from about 0.1 s to
+about 0.9 s, and under this load C4's warm target (≤ 500 ms) would fail on all
+100.
+
+*What the log missed:* `duration_ms` stayed at 95 ms while clients waited
+920 ms. The clock starts when the worker picks a request up, so the time spent
+queued in front of the worker isn't in the log at all. Reading only the log,
+this load test would look like a quiet day. C2's 25 ms duration check holds
+only because the criteria send one request at a time. The fix I'd make is to
+have gunicorn stamp each request with its arrival time, or log the client's
+own time, and record `queued_ms` beside `duration_ms`. A second worker would
+double throughput, but it costs another 1 GB of memory and splits the rate
+limiter's counts (`gunicorn.conf.py`).
+
+**What's Still Broken**
+
+*Criteria still missed*
+
+| Criterion | Where it stands | What I'd do | Why I stopped |
+|---|---|---|---|
+| C5: warm ≤ 0.5 CPU-s | Missed in every run log. The 2-thread change (stretch 4) met it in its one unloaded trial, then missed in two trials under background load | Re-run on a quiet machine to see whether 2 threads is enough. If it isn't, cap the input at fewer tokens (the cost scales with the 400-token cap), but that's a scoring change, so it needs its own measured run | The machine couldn't be cleared for a fair re-run, and lowering the token cap changes the scores, which this shape ruled out of scope |
+
+*Met, but the targets were set low:*
+
+- **C4** was met with wide margins: cold 3.6–4.3 s against 10 s, and warm at
+  most 314 ms against 500 ms. I'd tighten it to cold ≤ 6 s and every warm
+  request ≤ 350 ms. Both still leave headroom over what was measured, and a
+  regression to M3's 5.7 s cold start would now show up.
+- **C3**'s "every other failure ≤ 500 ms" measured 7–13 ms. 50 ms would
+  still pass and mean something.
+
+*Not covered by any criterion:*
+
+- `/health` says `"ok": true` while the model can't load.
+- #26 is a `500` rather than a `400`.
+- gunicorn's own rejections, such as a request line over 4,094 bytes, never
+  reach Flask, so they leave no record.
+- A request the 120 s worker timeout kills leaves no record either.
+- `verified_lookup` reads the whole audit log on every submission.
+
+*The one thing I'd do first* is make `/health` tell "cold" apart from
+"broken": try the load, and report the last load error with its time. Every
+other fix assumes someone knows the service is down, and today the one
+endpoint built to say so says `ok`.
+
+**How I Used AI**
+
+**Moment 1: picking the shape**
+
+- *What I asked:* which of the three shapes fit Provenance Guard, with the
+  trade-offs, before writing any code.
+- *What came back:* a recommendation for A, deploy and instrument, run
+  locally (Path B). The log had no duration and no record of what came in,
+  gunicorn was installed but never used, and an unhandled error left no trace,
+  so the operational layer was the real gap. B was the close second, with
+  richer bad-path criteria but about twice the feature code. It also pointed
+  out that a free Hugging Face Space has the memory the 512 MB tier doesn't.
+- *What I changed:* I took A, and I had the latency breakdown built into
+  Milestone 3's logging rather than bolted on later, since it uses the same
+  stage timers. I also declared the hosted run as a stretch, on the condition
+  that I do the account and login myself. I kept the signals frozen so unit
+  8's results stay comparable, and wrote that down as out of scope.
+
+**Moment 2: the C1 run I threw away**
+
+- *What I asked:* for a harness that runs C1 three times, each in a fresh
+  clone with empty caches, following RUNNING.md's own commands.
+- *What came back:* trial 1 met. Trials 2 and 3 came back `decided`, but their
+  `content_id` was on 0 lines of their own clone's log. The harness had
+  stopped trial 1's `bash` wrapper but not the gunicorn under it, so that
+  server kept the port and answered the next two trials' curls. The new
+  servers had only printed "Connection in use".
+- *What I changed:* I didn't count it as a RUNNING.md miss, and I didn't
+  delete it either. The criterion's own `content_id` check is what caught it,
+  which is the reason that check exists. I kept the run as
+  `…_DISCARDED_stray_server` with the reason, had the harness `exec` the start
+  command and flag "Connection in use" as a broken setup, and reran all three
+  trials. All three met.
 
 ---
 
