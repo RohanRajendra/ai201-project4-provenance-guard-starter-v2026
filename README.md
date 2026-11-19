@@ -1927,6 +1927,24 @@ question about one writer, it reads and parses the entire audit log on every
 submission (about 1,750 lines, 0.6 MB at the time), so its cost tracks the
 size of the log, not the size of the request.
 
+*A hundred people a day.* Assume each person submits 3 pieces (a draft, a
+fix, a final), so 300 runs a day.
+
+- **Compute:** 300 × 0.263 CPU-s = 78.9 CPU-s. Add one cold start a day (3.47
+  CPU-s) and it's **82.4 CPU-s a day**. That's 0.1% of one CPU's 86,400
+  seconds.
+- **Host:** the 1.3 GB peak needs a 2 GB instance. Render's Standard (2 GB,
+  1 CPU) is **$25 a month**, which is $25 ÷ 30 = **$0.83 a day**, or
+  $0.83 ÷ 300 = **$0.0028 per run**.
+- **The CPU's share of that:** at Render's per-minute rate for the same plan
+  ($0.00058/min, or $0.0000097 per CPU-second), 82.4 CPU-s is $0.0008 a day,
+  under 0.1% of the bill.
+
+So the cost isn't the scoring. It's keeping a 1.3 GB model in memory all day.
+Ten times the users (3,000 runs, 824 CPU-s, about 1% of the CPU) would cost the
+same $25. (Render's price is from its pricing page, checked 2026-11-18; the
+per-run figures are measured.)
+
 **Run Log and Verdicts**
 
 Criteria are in `criteria.md` → *Capstone criteria*. `run_capstone.py` runs
@@ -2086,6 +2104,71 @@ reads `input.creator_id` has to allow for it. And it doesn't fix the status:
 #26 is still a `500`, because the limiter's key function crashes before the
 route can refuse it. A malformed body should be a `400`, and that's shape B's
 fix, written up under *What's Still Broken*.
+
+**What's Still Broken**
+
+*Criteria still missed*
+
+| Criterion | Where it stands | What I'd do | Why I stopped |
+|---|---|---|---|
+| C5: warm ≤ 0.5 CPU-s | Met in 2 of 3 trials, both before and after. Every miss is a 400-token text, at 503–585 CPU-ms | Run torch on 2 threads instead of 4. The probe puts that at −14% CPU for +15 ms of wall time, with an identical score | One improvement per milestone, and C2's was the one that protected the evidence. This one is the declared second improvement (stretch 4) |
+
+*Met, but the targets were set low:*
+
+- **C4** was met with wide margins: cold 3.6–4.3 s against 10 s, and warm at
+  most 314 ms against 500 ms. I'd tighten it to cold ≤ 6 s and every warm
+  request ≤ 350 ms. Both still leave headroom over what was measured, and a
+  regression to M3's 5.7 s cold start would now show up.
+- **C3**'s "every other failure ≤ 500 ms" measured 7–13 ms. 50 ms would
+  still pass and mean something.
+
+*Not covered by any criterion:*
+
+- `/health` says `"ok": true` while the model can't load.
+- #26 is a `500` rather than a `400`.
+- gunicorn's own rejections, such as a request line over 4,094 bytes, never
+  reach Flask, so they leave no record.
+- A request the 120 s worker timeout kills leaves no record either.
+- `verified_lookup` reads the whole audit log on every submission.
+
+*The one thing I'd do first* is make `/health` tell "cold" apart from
+"broken": try the load, and report the last load error with its time. Every
+other fix assumes someone knows the service is down, and today the one
+endpoint built to say so says `ok`.
+
+**How I Used AI**
+
+**Moment 1: picking the shape**
+
+- *What I asked:* which of the three shapes fit Provenance Guard, with the
+  trade-offs, before writing any code.
+- *What came back:* a recommendation for A, deploy and instrument, run
+  locally (Path B). The log had no duration and no record of what came in,
+  gunicorn was installed but never used, and an unhandled error left no trace,
+  so the operational layer was the real gap. B was the close second, with
+  richer bad-path criteria but about twice the feature code. It also pointed
+  out that a free Hugging Face Space has the memory the 512 MB tier doesn't.
+- *What I changed:* I took A, and I had the latency breakdown built into
+  Milestone 3's logging rather than bolted on later, since it uses the same
+  stage timers. I also declared the hosted run as a stretch, on the condition
+  that I do the account and login myself. I kept the signals frozen so unit
+  8's results stay comparable, and wrote that down as out of scope.
+
+**Moment 2: the C1 run I threw away**
+
+- *What I asked:* for a harness that runs C1 three times, each in a fresh
+  clone with empty caches, following RUNNING.md's own commands.
+- *What came back:* trial 1 met. Trials 2 and 3 came back `decided`, but their
+  `content_id` was on 0 lines of their own clone's log. The harness had
+  stopped trial 1's `bash` wrapper but not the gunicorn under it, so that
+  server kept the port and answered the next two trials' curls. The new
+  servers had only printed "Connection in use".
+- *What I changed:* I didn't count it as a RUNNING.md miss, and I didn't
+  delete it either. The criterion's own `content_id` check is what caught it,
+  which is the reason that check exists. I kept the run as
+  `…_DISCARDED_stray_server` with the reason, had the harness `exec` the start
+  command and flag "Connection in use" as a broken setup, and reran all three
+  trials. All three met.
 
 ---
 
