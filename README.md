@@ -2015,6 +2015,78 @@ cpu ms:  500.6  584.64  518.01  517.63  497.67
 Four of those are over 500. Run 1's fifth miss was a `MY_WRITING` run
 (278 words): 255.93 ms wall, 502.13 cpu ms.
 
+*Diagnosis.*
+
+- **C2 missed. The stage is the request-log hook, `app.py::_log_request`. The
+  mechanism is one `try` around the whole record.** The body nested 100,000
+  deep makes Python's JSON decoder raise `RecursionError`, not `ValueError`,
+  and `request.get_json(silent=True)` only swallows `ValueError`. The rate
+  limiter's key function parsed the body first, raised, and
+  `app.py::internal_error` answered 500. Then `_input_summary` parsed it again
+  (a failed parse isn't cached) and raised again, inside the one `try` that
+  wraps building *and* writing the record. So one field that couldn't be built
+  cost the whole line. The other 25 rows passed every check in all three
+  trials, including the 250,000-character body (#15) on the duration check.
+- **C5 missed. The stage is the model, the gpt2 forward pass in
+  `detector.py::perplexity`. The mechanism is that `cpu_ms` counts every torch
+  thread.** Seven of the eight misses were the 10,000-character text, which is
+  always cut to the 400-token cap. The eighth was a 278-word text near the cap.
+  At 400 tokens the pass takes about 250 ms of wall time, but torch runs it on
+  4 intra-op threads, so it burns about twice that in CPU. Peak memory was fine
+  (at most 1,307 MB). A probe outside the server
+  (`results/probe_torch_threads_before.md`, `detector.perplexity` on the
+  400-token text) measured the trade directly. At 4 threads it's 203 ms wall
+  and 431 ms CPU. At 2 threads it's 218 ms wall and 370 ms CPU, with an
+  identical score. Above two threads, the extra threads cost more CPU than they
+  save in wall time.
+- **No shared stage.** The two misses come from different parts of the
+  system: the log hook, and the model's threading. They're two problems, not
+  one with two symptoms. C1, C3 and C4 were met in every trial.
+
+**The Improvement**
+
+*What changed:* `app.py::_log_request` now builds the record's cheap fields
+first. Each summary (`input`, `output`) is built in its own `try`, and one that
+fails becomes `{"log_error": "<the exception>"}` in that field, so the record
+is still written. The outer `try` now guards only the file write. There's a
+new test, `test_a_body_too_deep_to_parse_still_gets_its_record`, and 41 of 41
+tests pass. It's aimed at the C2 diagnosis: a summary that can't be built
+should cost that field, not the record.
+
+*Run log after* (`results/capstone_2026-11-18_1851_after.md`,
+`results/capstone_2026-11-18_1854_after_c1.md`; C1 cloned the fix's commit
+`682ba97`):
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| C1. A fresh clone runs from RUNNING.md alone | 0 extra steps · `decided` · 1 log line at 200 | 0 · decided · 1 line | 0 · decided · 1 line | 0 · decided · 1 line | **MET** |
+| C2. Every request leaves one correct record | 26/26, log +26, 0 write failures | 26/26 · +26 · 0 | 26/26 · +26 · 0 | 26/26 · +26 · 0 | **MET** |
+| C3. Failures are JSON, decide nothing, recover | 5/5 503 · recovers · 3/3 500 · 2 decided · 1 pid · timing | all pass (first 503 2.97 s) | all pass (2.69 s) | all pass (3.11 s) | **MET** |
+| C4. Cold ≤ 10 s, warm ≤ 500 ms | cold 1/1, warm 25/25 | 3.56 s · 25/25 (max 222 ms) | 3.61 s · 25/25 (max 258 ms) | 3.70 s · 25/25 (max 221 ms) | **MET** |
+| C5. Warm ≤ 0.5 CPU-s, peak ≤ 1,536 MB | 25/25, peak ≤ 1,536 | 25/25 (max 452) · 1,307 MB | 23/25 (max 531) · 1,305 MB | 25/25 (max 460) · 1,224 MB | **MISSED** |
+
+#26's record now exists (`logs/requests.jsonl`):
+
+```json
+{"timestamp": "2026-11-18T23:52:05.571+00:00", "request_id": "181ada86ece0", "method": "POST", "route": "/submit", "status": 500, "duration_ms": 4.58, "cpu_ms": 3.71, "max_rss_mb": 1118.8, "input": {"log_error": "RecursionError('maximum recursion depth exceeded while decoding a JSON array from a unicode string')"}, "output": {"bytes": 121, "error": "internal_error"}, "stages_ms": null, "error": {"type": "RecursionError", "message": "maximum recursion depth exceeded while decoding a JSON array from a unicode string"}, "pid": 84321}
+```
+
+*Did it help?* Yes, for C2: it went from 25/26 to 26/26 in every trial, the
+log grew by exactly 26, and there were 0 `request log write failed` lines. The
+other four didn't move, and C5 wasn't expected to, since this change doesn't
+touch the model. C5 met two trials this time and missed one (two 10,000-
+character runs at 531 and 503 CPU-ms), which is the same spread as before: 20,
+25 and 23 out of 25 then, against 25, 23 and 25 now.
+
+*What it cost elsewhere:* nothing measurable in time. #26's round trip was
+6.74 ms after, against 8.24 ms before, and C4's warm maximum stayed between
+220 and 260 ms. But it changes what a reader of the log can rely on.
+`input` can now be `{"log_error": …}` instead of the summary, so anything that
+reads `input.creator_id` has to allow for it. And it doesn't fix the status:
+#26 is still a `500`, because the limiter's key function crashes before the
+route can refuse it. A malformed body should be a `400`, and that's shape B's
+fix, written up under *What's Still Broken*.
+
 ---
 
 📖 **How to run this project: [RUNNING.md](RUNNING.md)**

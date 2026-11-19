@@ -1,0 +1,169 @@
+# folder /var/folders/3q/39r6r5bx16j_b27vptzcspkh0000gn/T/c1_t3_60qwfuum
+# HF_HOME, HF_HUB_CACHE, PIP_CACHE_DIR inside it; PORT=5006
+
+$ git clone /Users/adri/scripts/projects/codepath/ai-prep/ai201-project4-provenance-guard-starter-v2026 provenance-guard
+cd provenance-guard
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.lock.txt
+python detector.py
+Cloning into 'provenance-guard'...
+done.
+Collecting blinker==1.9.0 (from -r requirements.lock.txt (line 3))
+  Downloading blinker-1.9.0-py3-none-any.whl.metadata (1.6 kB)
+Collecting certifi==2026.10.23 (from -r requirements.lock.txt (line 4))
+  Downloading certifi-2026.10.23-py3-none-any.whl.metadata (2.5 kB)
+Collecting charset-normalizer==3.5.2 (from -r requirements.lock.txt (line 5))
+  Downloading charset_normalizer-3.5.2-cp313-cp313-macosx_10_13_universal2.whl.metadata (46 kB)
+Collecting click==8.5.0 (from -r requirements.lock.txt (line 6))
+  Downloading click-8.5.0-py3-none-any.whl.metadata (2.6 kB)
+Collecting Deprecated==3.0.0 (from -r requirements.lock.txt (line 7))
+  Downloading deprecated-3.0.0-py3-none-any.whl.metadata (6.5 kB)
+Collecting filelock==4.2.4 (from -r requirements.lock.txt (line 8))
+  Downloading filelock-4.2.4-py3-none-any.whl.metadata (2.0 kB)
+Collecting Flask==3.1.3 (from -r requirements.lock.txt (line 9))
+  Downloading flask-3.1.3-py3-none-any.whl.metadata (3.2 kB)
+Collecting Flask-Limiter==3.12 (from -r requirements.lock.txt (line 10))
+  Downloading flask_limiter-3.12-py3-none-any.whl.metadata (6.3 kB)
+Collecting fsspec==2026.9.0 (from -r requirements.lock.txt (line 11))
+  Downloading fsspec-2026.9.0-py3-none-any.whl.metadata (10 kB)
+Collecting gunicorn==23.0.0 (from -r requirements.lock.txt (line 12))
+  Downloading gunicorn-23.0.0-py3-none-any.whl.metadata (4.4 kB)
+Collecting hf-xet==1.7.1 (from -r requirements.lock.txt (line 13))
+  Downloading hf_xet-1.7.1-cp38-abi3-macosx_11_0_arm64.whl.metadata (4.9 kB)
+Collecting huggingface_hub==0.36.2 (from -r requirements.lock.txt (line 14))
+  Downloading huggingface_hub-0.36.2-py3-none-any.whl.metadata (15 kB)
+Collecting idna==3.20 (from -r requirements.lock.txt (line 15))
+  Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+Collecting itsdangerous==2.2.0 (from -r requirements.lock.txt (line 16))
+  Downloading itsdangerous-2.2.0-py3-none-any.whl.metadata (1.9 kB)
+Collecting Jinja2==3.1.6 (from -r requirements.lock.txt (line 17))
+  Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting limits==5.8.0 (from -r requirements.lock.txt (line 18))
+  Downloading limits-5.8.0-py3-none-any.whl.metadata (10 kB)
+Collecting markdown-it-py==4.2.0 (from -r requirements.lock.txt (line 19))
+  Downloading markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+Collecting MarkupSafe==3.0.4 (from -r requirements.lock.txt (line 20))
+  Downloading markupsafe-3.0.4-cp313-cp313-macosx_11_0_arm64.whl.metadata (2.7 kB)
+Collecting mdurl==0.1.2 (from -r requirements.lock.txt (line 21))
+  Downloading mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+Collecting mpmath==1.3.0 (from -r requirements.lock.txt (line 22))
+  Downloading mpmath-1.3.0-py3-none-any.whl.metadata (8.6 kB)
+Collecting networkx==3.7 (from -r requirements.lock.txt (line 23))
+  Downloading networkx-3.7-py3-none-any.whl.metadata (6.7 kB)
+Collecting numpy==2.5.4 (from -r requirements.lock.txt (line 24))
+  Downloading numpy-2.5.4-cp313-cp313-macosx_14_0_arm64.whl.metadata (6.6 kB)
+Collecting ordered-set==4.1.0 (from -r requirements.lock.txt (line 25))
+  Downloading ordered_set-4.1.0-py3-none-any.whl.metadata (5.3 kB)
+Collecting packaging==26.3 (from -r requirements.lock.txt (line 26))
+  Downloading packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+Collecting Pygments==2.21.0 (from -r requirements.lock.txt (line 27))
+  Downloading pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+Collecting PyYAML==6.0.3 (from -r requirements.lock.txt (line 28))
+  Downloading pyyaml-6.0.3-cp313-cp313-macosx_11_0_arm64.whl.metadata (2.4 kB)
+Collecting regex==2026.9.29 (from -r requirements.lock.txt (line 29))
+  Downloading regex-2026.9.29-cp313-cp313-macosx_11_0_arm64.whl.metadata (40 kB)
+Collecting requests==2.34.2 (from -r requirements.lock.txt (line 30))
+  Downloading requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+Collecting rich==13.9.4 (from -r requirements.lock.txt (line 31))
+  Downloading rich-13.9.4-py3-none-any.whl.metadata (18 kB)
+Collecting safetensors==0.8.0 (from -r requirements.lock.txt (line 32))
+  Downloading safetensors-0.8.0-cp310-abi3-macosx_11_0_arm64.whl.metadata (4.2 kB)
+Collecting setuptools==84.2.1 (from -r requirements.lock.txt (line 33))
+  Downloading setuptools-84.2.1-py3-none-any.whl.metadata (6.6 kB)
+Collecting sympy==1.14.0 (from -r requirements.lock.txt (line 34))
+  Downloading sympy-1.14.0-py3-none-any.whl.metadata (12 kB)
+Collecting tokenizers==0.22.2 (from -r requirements.lock.txt (line 35))
+  Downloading tokenizers-0.22.2-cp39-abi3-macosx_11_0_arm64.whl.metadata (7.3 kB)
+Collecting torch==2.15.0 (from -r requirements.lock.txt (line 36))
+  Downloading torch-2.15.0-cp313-cp313-macosx_14_0_arm64.whl.metadata (36 kB)
+Collecting tqdm==4.70.1 (from -r requirements.lock.txt (line 37))
+  Downloading tqdm-4.70.1-py3-none-any.whl.metadata (57 kB)
+Collecting transformers==4.57.6 (from -r requirements.lock.txt (line 38))
+  Downloading transformers-4.57.6-py3-none-any.whl.metadata (43 kB)
+Collecting typing_extensions==4.16.0 (from -r requirements.lock.txt (line 39))
+  Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting urllib3==2.8.0 (from -r requirements.lock.txt (line 40))
+  Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+Collecting Werkzeug==3.1.9 (from -r requirements.lock.txt (line 41))
+  Downloading werkzeug-3.1.9-py3-none-any.whl.metadata (4.1 kB)
+Collecting wrapt==2.5.1 (from -r requirements.lock.txt (line 42))
+  Downloading wrapt-2.5.1-cp313-cp313-macosx_11_0_arm64.whl.metadata (7.6 kB)
+Downloading blinker-1.9.0-py3-none-any.whl (8.5 kB)
+Downloading certifi-2026.10.23-py3-none-any.whl (135 kB)
+Downloading charset_normalizer-3.5.2-cp313-cp313-macosx_10_13_universal2.whl (366 kB)
+Downloading click-8.5.0-py3-none-any.whl (125 kB)
+Downloading deprecated-3.0.0-py3-none-any.whl (21 kB)
+Downloading filelock-4.2.4-py3-none-any.whl (162 kB)
+Downloading flask-3.1.3-py3-none-any.whl (103 kB)
+Downloading flask_limiter-3.12-py3-none-any.whl (28 kB)
+Downloading fsspec-2026.9.0-py3-none-any.whl (221 kB)
+Downloading gunicorn-23.0.0-py3-none-any.whl (85 kB)
+Downloading hf_xet-1.7.1-cp38-abi3-macosx_11_0_arm64.whl (3.6 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.6/3.6 MB 2.8 MB/s eta 0:00:00
+Downloading huggingface_hub-0.36.2-py3-none-any.whl (566 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 566.4/566.4 kB 3.8 MB/s eta 0:00:00
+Downloading idna-3.20-py3-none-any.whl (69 kB)
+Downloading itsdangerous-2.2.0-py3-none-any.whl (16 kB)
+Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+Downloading limits-5.8.0-py3-none-any.whl (60 kB)
+Downloading markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+Downloading markupsafe-3.0.4-cp313-cp313-macosx_11_0_arm64.whl (12 kB)
+Downloading mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+Downloading mpmath-1.3.0-py3-none-any.whl (536 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 536.2/536.2 kB 3.8 MB/s eta 0:00:00
+Downloading networkx-3.7-py3-none-any.whl (2.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.1/2.1 MB 4.8 MB/s eta 0:00:00
+Downloading numpy-2.5.4-cp313-cp313-macosx_14_0_arm64.whl (5.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.4/5.4 MB 7.2 MB/s eta 0:00:00
+Downloading ordered_set-4.1.0-py3-none-any.whl (7.6 kB)
+Downloading packaging-26.3-py3-none-any.whl (129 kB)
+Downloading pygments-2.21.0-py3-none-any.whl (1.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 8.6 MB/s eta 0:00:00
+Downloading pyyaml-6.0.3-cp313-cp313-macosx_11_0_arm64.whl (173 kB)
+Downloading regex-2026.9.29-cp313-cp313-macosx_11_0_arm64.whl (293 kB)
+Downloading requests-2.34.2-py3-none-any.whl (73 kB)
+Downloading rich-13.9.4-py3-none-any.whl (242 kB)
+Downloading safetensors-0.8.0-cp310-abi3-macosx_11_0_arm64.whl (484 kB)
+Downloading setuptools-84.2.1-py3-none-any.whl (876 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 876.3/876.3 kB 8.5 MB/s eta 0:00:00
+Downloading sympy-1.14.0-py3-none-any.whl (6.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.3/6.3 MB 11.9 MB/s eta 0:00:00
+Downloading tokenizers-0.22.2-cp39-abi3-macosx_11_0_arm64.whl (3.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.0/3.0 MB 13.7 MB/s eta 0:00:00
+Downloading torch-2.15.0-cp313-cp313-macosx_14_0_arm64.whl (138.6 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 138.6/138.6 MB 21.1 MB/s eta 0:00:00
+Downloading tqdm-4.70.1-py3-none-any.whl (80 kB)
+Downloading transformers-4.57.6-py3-none-any.whl (12.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 12.0/12.0 MB 25.7 MB/s eta 0:00:00
+Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+Downloading werkzeug-3.1.9-py3-none-any.whl (228 kB)
+Downloading wrapt-2.5.1-cp313-cp313-macosx_11_0_arm64.whl (106 kB)
+Installing collected packages: mpmath, wrapt, urllib3, typing_extensions, tqdm, sympy, setuptools, safetensors, regex, PyYAML, Pygments, packaging, ordered-set, numpy, networkx, mdurl, MarkupSafe, itsdangerous, idna, hf-xet, fsspec, filelock, click, charset-normalizer, certifi, blinker, Werkzeug, requests, markdown-it-py, Jinja2, gunicorn, Deprecated, torch, rich, limits, huggingface_hub, Flask, tokenizers, Flask-Limiter, transformers
+Successfully installed Deprecated-3.0.0 Flask-3.1.3 Flask-Limiter-3.12 Jinja2-3.1.6 MarkupSafe-3.0.4 PyYAML-6.0.3 Pygments-2.21.0 Werkzeug-3.1.9 blinker-1.9.0 certifi-2026.10.23 charset-normalizer-3.5.2 click-8.5.0 filelock-4.2.4 fsspec-2026.9.0 gunicorn-23.0.0 hf-xet-1.7.1 huggingface_hub-0.36.2 idna-3.20 itsdangerous-2.2.0 limits-5.8.0 markdown-it-py-4.2.0 mdurl-0.1.2 mpmath-1.3.0 networkx-3.7 numpy-2.5.4 ordered-set-4.1.0 packaging-26.3 regex-2026.9.29 requests-2.34.2 rich-13.9.4 safetensors-0.8.0 setuptools-84.2.1 sympy-1.14.0 tokenizers-0.22.2 torch-2.15.0 tqdm-4.70.1 transformers-4.57.6 typing_extensions-4.16.0 urllib3-2.8.0 wrapt-2.5.1
+
+[notice] A new release of pip is available: 24.3.1 -> 26.3
+[notice] To update, run: pip install --upgrade pip
+`loss_type=None` was set in the config but it is unrecognized. Using the default loss: `ForCausalLMLoss`.
+(no text given — scoring a sample)
+
+Loading gpt2 (first run downloads ~550 MB)…
+perplexity     12.5
+model_signal   0.8864   (higher = more likely AI)
+
+# setup exit 0
+
+$ gunicorn -c gunicorn.conf.py app:app
+
+$ curl http://127.0.0.1:5006/health
+{"detector_loaded":false,"detector_model":"gpt2","log_entries":1933,"ok":true,"rate_limiting":true}
+
+
+$ curl -X POST http://127.0.0.1:5006/submit -H "Content-Type: application/json" -d '{"creator_id": "me", "text": "I walked to the market this morning because the bus was late again, and on the way I passed the old bakery that closed last spring. Somebody has painted the windows blue."}'
+{"chars_removed":0,"confidence":0.4,"content_id":"f91c4f9e-358f-4513-8634-5bed2a36ae4a","creator_id":"me","guess":"unsure","label":"We couldn't tell whether this piece was written by a person or by an AI tool. Many people's own writing gets this result, so it is not a sign that anything was done wrong. If you wrote this, you can ask for a person to review it.","marker_score":0.0,"model_score":0.4806,"status":"decided","style_score":0.6232,"text_modified":false,"verified_writer":false}
+
+
+$ curl "http://127.0.0.1:5006/log?log=requests&limit=5"
+{"count":5,"entries":[{"cpu_ms":434.71,"duration_ms":212.8,"error":null,"input":{"chars":10000,"creator_id":"c45_t3_max_3","preview":"It is interesting to contemplate an entangled bank, clothed ","sha256":"a15047b0abba","words":1852},"max_rss_mb":1214.2,"method":"POST","output":{"bytes":324,"confidence":0.3532,"content_id":"e4895c5c-8f94-48b4-808e-92f5757da88d","guess":"human","status":"decided"},"pid":79491,"request_id":"fad26e5dd0a3","route":"/submit","stages_ms":{"audit_write":0.42,"combine":0.0,"markers":2.73,"model":190.01,"model_load":0.0,"style":6.77,"validate":3.88,"verified_lookup":8.44},"status":200,"timestamp":"2026-11-18T23:37:56.688+00:00"},{"cpu_ms":502.33,"duration_ms":240.53,"error":null,"input":{"chars":10000,"creator_id":"c45_t3_max_4","preview":"It is interesting to contemplate an entangled bank, clothed ","sha256":"a15047b0abba","words":1852},"max_rss_mb":1214.2,"method":"POST","output":{"bytes":324,"confidence":0.3532,"content_id":"20ee5c7c-b4fe-47da-93b3-8a9e425dcc9c","guess":"human","status":"decided"},"pid":79491,"request_id":"a476e69d57a6","route":"/submit","stages_ms":{"audit_write":0.24,"combine":0.0,"markers":2.71,"model":217.45,"model_load":0.0,"style":6.87,"validate":4.48,"verified_lookup":8.2},"status":200,"timestamp":"2026-11-18T23:37:56.934+00:00"},{"cpu_ms":11.23,"duration_ms":11.56,"error":null,"input":{},"max_rss_mb":41.8,"method":"GET","output":{"bytes":100,"detector_loaded":false,"ok":true},"pid":86856,"request_id":"a90c9dc8f36f","route":"/health","stages_ms":null,"status":200,"timestamp":"2026-11-18T23:59:57.794+00:00"},{"cpu_ms":8.61,"duration_ms":8.68,"error":null,"input":{},"max_rss_mb":41.9,"method":"GET","output":{"bytes":100,"detector_loaded":false,"ok":true},"pid":86856,"request_id":"f3e0af9dc9db","route":"/health","stages_ms":null,"status":200,"timestamp":"2026-11-18T23:59:57.841+00:00"},{"cpu_ms":3748.44,"duration_ms":4869.19,"error":null,"input":{"chars":170,"creator_id":"me","preview":"I walked to the market this morning because the bus was late","sha256":"964596cbb966","words":32},"max_rss_mb":865.0,"method":"POST","output":{"bytes":490,"confidence":0.4,"content_id":"f91c4f9e-358f-4513-8634-5bed2a36ae4a","guess":"unsure","status":"decided"},"pid":86856,"request_id":"f865812ba268","route":"/submit","stages_ms":{"audit_write":0.54,"combine":0.01,"markers":0.06,"model":138.21,"model_load":4712.96,"style":0.2,"validate":0.24,"verified_lookup":16.01},"status":200,"timestamp":"2026-11-19T00:00:02.729+00:00"}]}
+
