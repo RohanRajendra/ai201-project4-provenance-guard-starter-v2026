@@ -2152,6 +2152,43 @@ its warm maximum rose to 453 ms, the closest any run has come to 500.
 *To re-check:* re-run `python run_capstone.py --label after2_quiet` with the
 same apps open as the first two run logs had, and compare it with this table.
 
+**Load Observation (stretch 2)**
+
+*Normal rate*, as the criteria run it: one client, one request at a time.
+*Ten times* that: 10 clients at once. Each ran 100 `/submit`s of `MY_WRITING`
+through `python measure.py --n 100 --concurrency 1` and then `--concurrency 10`,
+back to back on one fresh server (`gunicorn -c gunicorn.conf.py app:app`,
+2-thread build), after one warm-up request. The background load was the same
+for both (load average about 5.5). Raw output:
+`results/measure_2026-11-18_2109_load_c1.md` and `…_load_c10.md`.
+
+| 100 × `/submit` | Normal (1 at a time) | 10× (10 at once) | Change |
+|---|---|---|---|
+| Throughput | 10.3 /s | 10.4 /s | none |
+| Errors | 0 / 100 | 0 / 100 | none |
+| Logged | 100 / 100 | 100 / 100 | none |
+| Client round trip, mean · p95 · max | 97 · 127 · 154 ms | **920 · 1,005 · 1,026 ms** | ×9.5 |
+| Log's `duration_ms`, mean · p95 | 96 · 125 ms | 95 · 125 ms | none |
+| CPU per run (`cpu_ms` mean) | 149 ms | 149 ms | none |
+| Peak memory | 1,102 MB | 1,102 MB | none |
+
+*What changed:* only the waiting. The one sync worker serves about 10 requests
+a second however many clients are sending, so at 10× each request queues
+behind about nine others. Nothing failed, nothing went unlogged, and a run cost
+the same CPU and memory. But every request's wait went from about 0.1 s to
+about 0.9 s, and under this load C4's warm target (≤ 500 ms) would fail on all
+100.
+
+*What the log missed:* `duration_ms` stayed at 95 ms while clients waited
+920 ms. The clock starts when the worker picks a request up, so the time spent
+queued in front of the worker isn't in the log at all. Reading only the log,
+this load test would look like a quiet day. C2's 25 ms duration check holds
+only because the criteria send one request at a time. The fix I'd make is to
+have gunicorn stamp each request with its arrival time, or log the client's
+own time, and record `queued_ms` beside `duration_ms`. A second worker would
+double throughput, but it costs another 1 GB of memory and splits the rate
+limiter's counts (`gunicorn.conf.py`).
+
 **What's Still Broken**
 
 *Criteria still missed*
