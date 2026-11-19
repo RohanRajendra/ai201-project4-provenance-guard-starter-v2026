@@ -46,6 +46,12 @@ DETECTOR_MODEL = os.getenv("AI201_DETECTOR_MODEL", "gpt2")
 # 300 words, which is enough for the signal to mean something.
 DETECTOR_MAX_TOKENS = 400
 
+# Unit 9, second improvement: torch's intra-op threads for one forward pass.
+# The default (4 here) cost 431 CPU-ms per 400-token pass against 370 at 2,
+# for 15 ms less wall time (results/probe_torch_threads_before.md). Scores
+# are identical at any thread count.
+TORCH_THREADS = int(os.getenv("AI201_TORCH_THREADS", "2"))
+
 
 # ─── Input limits ────────────────────────────────────────────────────────────
 # Over the cap → 413. Under the minimum → 422: too little for any signal to
