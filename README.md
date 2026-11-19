@@ -2105,13 +2105,60 @@ reads `input.creator_id` has to allow for it. And it doesn't fix the status:
 route can refuse it. A malformed body should be a `400`, and that's shape B's
 fix, written up under *What's Still Broken*.
 
+**Second Improvement (stretch 4)**
+
+*What changed:* torch now runs one forward pass on 2 intra-op threads instead
+of its default 4 (`config.py::TORCH_THREADS`, applied in
+`detector.py::_load`). It's aimed at the C5 diagnosis: on the 400-token text,
+the probe measured 431 CPU-ms at 4 threads against 370 at 2, for 15 ms more
+wall time and an identical score.
+
+*Third run log* (`results/capstone_2026-11-18_2035_after2.md`; `results/capstone_2026-11-18_2056_after2_c1.md`, cloning commit `2e4f882`).
+⚠️ **This one was taken under load.** Zoom, Discord and Google Drive were
+running, and the load average was 11.9 at the end, while the first two run
+logs had a quieter machine. I couldn't close them at the time, so it's
+reported as is.
+
+| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+|---|---|---|---|---|---|
+| C1. A fresh clone runs from RUNNING.md alone | 0 extra steps · `decided` · 1 log line at 200 | 0 · decided · 1 line | 0 · decided · 1 line | 0 · decided · 1 line | **MET** |
+| C2. Every request leaves one correct record | 26/26, log +26, 0 write failures | 26/26 · +26 · 0 | 26/26 · +26 · 0 | 26/26 · +26 · 0 | **MET** |
+| C3. Failures are JSON, decide nothing, recover | 5/5 503 · recovers · 3/3 500 · 2 decided · 1 pid · timing | all pass (first 503 1.55 s) | all pass (3.43 s) | all pass (3.87 s) | **MET** |
+| C4. Cold ≤ 10 s, warm ≤ 500 ms | cold 1/1, warm 25/25 | 2.41 s · 25/25 (max 335 ms) | 5.34 s · 25/25 (max 331 ms) | 5.31 s · 25/25 (max 453 ms) | **MET** |
+| C5. Warm ≤ 0.5 CPU-s, peak ≤ 1,536 MB | 25/25, peak ≤ 1,536 | 25/25 (max 435) · 1,210 MB | 24/25 (max 505) · 1,191 MB | 20/25 (max 589) · 1,066 MB | **MISSED** |
+
+The medians for the 10,000-character warm runs, across the three run logs:
+
+| Run log | Wall ms, runs 1 / 2 / 3 | CPU ms, runs 1 / 2 / 3 | CPU ÷ wall |
+|---|---|---|---|
+| Before (4 threads) | 257 / 220 / 219 | 518 / 455 / 435 | 2.0 |
+| After change 1 (4 threads) | 218 / 229 / 213 | 441 / 466 / 433 | 2.0 |
+| After change 2 (2 threads, under load) | 218 / 292 / 366 | **360** / 463 / 574 | **1.6** |
+
+*Did it help?* Partly, and the load stops me saying how much. Run 1 is the
+probe's prediction made real: a 360 ms CPU median on the long text, down from
+433–518, with 25/25 under 500. Runs 2 and 3 slowed down as the background load
+rose, in wall time (218 → 366 ms) and CPU alike, because a contended core does
+less work per second. One thing did hold in all three runs: CPU per
+millisecond of wall time fell from 2.0 to 1.6. That's the mechanism the change
+targets, the extra threads' overhead. C5 is still **MISSED**, but this run
+can't say whether the change would meet it on a quiet machine.
+
+*What it cost elsewhere:* run 1 shows the wall time the probe predicted (a
+218 ms median, the same as before). Under load it's worse, because with 2
+threads a busy machine has fewer threads to fall back on. C4 still held, but
+its warm maximum rose to 453 ms, the closest any run has come to 500.
+
+*To re-check:* re-run `python run_capstone.py --label after2_quiet` with the
+same apps open as the first two run logs had, and compare it with this table.
+
 **What's Still Broken**
 
 *Criteria still missed*
 
 | Criterion | Where it stands | What I'd do | Why I stopped |
 |---|---|---|---|
-| C5: warm ≤ 0.5 CPU-s | Met in 2 of 3 trials, both before and after. Every miss is a 400-token text, at 503–585 CPU-ms | Run torch on 2 threads instead of 4. The probe puts that at −14% CPU for +15 ms of wall time, with an identical score | One improvement per milestone, and C2's was the one that protected the evidence. This one is the declared second improvement (stretch 4) |
+| C5: warm ≤ 0.5 CPU-s | Missed in every run log. The 2-thread change (stretch 4) met it in its one unloaded trial, then missed in two trials under background load | Re-run on a quiet machine to see whether 2 threads is enough. If it isn't, cap the input at fewer tokens (the cost scales with the 400-token cap), but that's a scoring change, so it needs its own measured run | The machine couldn't be cleared for a fair re-run, and lowering the token cap changes the scores, which this shape ruled out of scope |
 
 *Met, but the targets were set low:*
 
